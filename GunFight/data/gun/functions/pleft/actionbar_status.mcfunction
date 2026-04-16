@@ -1,0 +1,11 @@
+execute unless score #mode mode_respawns matches 1 as @a[tag=Red,gamemode=!creative,gamemode=!spectator] run title @s actionbar [{"text":"Players Left  ","color":"gold"},{"text":"Your Team: ","color":"red"},{"score":{"name":"#Red","objective":"rcount"},"color":"white"},{"text":"  Enemy: ","color":"aqua"},{"score":{"name":"#Blue","objective":"bcount"},"color":"white"}]
+execute unless score #mode mode_respawns matches 1 as @a[tag=Blue,gamemode=!creative,gamemode=!spectator] run title @s actionbar [{"text":"Players Left  ","color":"gold"},{"text":"Your Team: ","color":"aqua"},{"score":{"name":"#Blue","objective":"bcount"},"color":"white"},{"text":"  Enemy: ","color":"red"},{"score":{"name":"#Red","objective":"rcount"},"color":"white"}]
+
+execute if score #mode mode_respawns matches 1 run scoreboard players operation #RedLeft tdm_ui = #target tdm_kill_target
+execute if score #mode mode_respawns matches 1 run scoreboard players operation #RedLeft tdm_ui -= #Red tdm_red_kills
+execute if score #mode mode_respawns matches 1 if score #RedLeft tdm_ui matches ..-1 run scoreboard players set #RedLeft tdm_ui 0
+execute if score #mode mode_respawns matches 1 run scoreboard players operation #BlueLeft tdm_ui = #target tdm_kill_target
+execute if score #mode mode_respawns matches 1 run scoreboard players operation #BlueLeft tdm_ui -= #Blue tdm_blue_kills
+execute if score #mode mode_respawns matches 1 if score #BlueLeft tdm_ui matches ..-1 run scoreboard players set #BlueLeft tdm_ui 0
+execute if score #mode mode_respawns matches 1 as @a[tag=Red,gamemode=!creative,gamemode=!spectator,tag=!gun_dead] run title @s actionbar [{"text":"Kills Left  ","color":"gold"},{"text":"You: ","color":"red"},{"score":{"name":"#RedLeft","objective":"tdm_ui"},"color":"white"},{"text":"  Enemy: ","color":"aqua"},{"score":{"name":"#BlueLeft","objective":"tdm_ui"},"color":"white"}]
+execute if score #mode mode_respawns matches 1 as @a[tag=Blue,gamemode=!creative,gamemode=!spectator,tag=!gun_dead] run title @s actionbar [{"text":"Kills Left  ","color":"gold"},{"text":"You: ","color":"aqua"},{"score":{"name":"#BlueLeft","objective":"tdm_ui"},"color":"white"},{"text":"  Enemy: ","color":"red"},{"score":{"name":"#RedLeft","objective":"tdm_ui"},"color":"white"}]

@@ -1,0 +1,2 @@
+gambitstats addmatch red
+gambitstats addmatch blue

@@ -1,0 +1,4 @@
+item replace entity @a[tag=sniper,gamemode=!creative,gamemode=!spectator] hotbar.0 with tacz:modern_kinetic_gun{AttachmentSCOPE:{Count:1b,id:"tacz:attachment",tag:{AttachmentId:"tacz:scope_standard_8x",ZoomNumber:9}},GunCurrentAmmoCount:5,GunFireMode:"SEMI",GunId:"tacz:ai_awp",HasBulletInBarrel:1b,RepairCost:0,display:{Name:'{"text":"Decree","italic":false}'}}
+item replace entity @a[tag=sniper,gamemode=!creative,gamemode=!spectator] hotbar.1 with tacz:modern_kinetic_gun{AttachmentMUZZLE:{Count:0b,id:"minecraft:air"},GunCurrentAmmoCount:8,GunFireMode:"SEMI",GunId:"tacz:deagle_golden",HasBulletInBarrel:1b,display:{Name:'{"text":"Heirloom","italic":false}'}}
+item replace entity @a[tag=sniper,gamemode=!creative,gamemode=!spectator] hotbar.2 with marbledsfirstaid:panacea_pills{Damage:0}
+item replace entity @a[tag=sniper,gamemode=!creative,gamemode=!spectator] hotbar.3 with marbledsfirstaid:panacea_pills{Damage:0}

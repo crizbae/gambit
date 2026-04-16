@@ -1,0 +1,1 @@
+gambitstats addwin blue
