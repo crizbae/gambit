@@ -1,4 +1,4 @@
-//  Commands:
+﻿//  Commands:
 //    /gambitstats                         — show leaderboard (any player)
 //    /gambitstats me                      — show your stats (any player)
 //    /gambitstats player <playerName>     — inspect one player (any player)
@@ -17,6 +17,8 @@
 //    /gambitboard setup                   — spawn a text_display billboard at your feet (ops only)
 //    /gambitboard remove                  — kill the nearest billboard text_display (ops only)
 //    /gambitboard refresh                 — force-update the billboard now (ops only)
+//
+//    gambit_log_match <red|blue|tie>      — log match result (called from win mcfunctions)
 // ============================================================
 
 var StringArgumentType = Java.loadClass('com.mojang.brigadier.arguments.StringArgumentType');
@@ -30,17 +32,16 @@ var PD_MVPS = 'gambit_stats_mvps';
 var LAST_TACZ_ATTACK_TTL_MS = 15000;
 var ATTACKER_CACHE_CLEANUP_INTERVAL_TICKS = 200;
 var STATS_FLUSH_INTERVAL_TICKS = 200;
-var PLAYERREVIVE_BLEEDING_KEY = 'playerrevive:bleeding';
 var STATS_FILE_PATH = 'kubejs/data/gambit_stats.json';
 var BILLBOARD_TAG = 'gambit_billboard';
 var BILLBOARD_UPDATE_INTERVAL_TICKS = 100;
 var BILLBOARD_POS_FILE = 'kubejs/data/gambit_billboard_pos.json';
+var LEADERBOARD_MIN_MATCHES = 10;
 
 // ── In-memory stat store ─────────────────────────────────────
 var stats = {};
 var roundStats = {};
 var recentPlayerAttackers = {};
-var recentDownedFinishers = {}; 
 var attackerCacheCleanupTicker = 0;
 var statsSaveTicker = 0;
 var statsDirty = false;
@@ -118,7 +119,7 @@ function buildBillboardText() {
       else if (i === 1) { prefix = '\u2605 '; color = 'gold'; }
       else if (i === 2) { prefix = '\u2605 '; color = 'yellow'; }
       else              { prefix = (i + 1) + '. '; color = 'white'; }
-      var line = prefix + name + '  KD:' + getKD(e).toFixed(2) + sep + 'D/L:' + getAvgDamagePerLife(e).toFixed(0);
+      var line = prefix + name + '  KD:' + getKD(e).toFixed(2) + sep + 'D/L:' + getAvgDamagePerLife(e).toFixed(1);
       var suffix = i < limit - 1 ? nl : '';
       components.push('{"text":"' + line + suffix + '","color":"' + color + '"}');
     }
@@ -140,6 +141,24 @@ function updateBillboard(server) {
 }
 
 function loadStatsFromDisk() {
+  // Try MySQL first when enabled
+  if (typeof gambitDbIsEnabled === 'function' && gambitDbIsEnabled()) {
+    var dbStats = gambitDbLoadAllStats();
+    if (dbStats !== null) {
+      var dbKeys = Object.keys(dbStats);
+      if (dbKeys.length > 0) {
+        var dbLoaded = {};
+        for (var di = 0; di < dbKeys.length; di++) {
+          dbLoaded[dbKeys[di]] = normalizeEntry(dbStats[dbKeys[di]]);
+        }
+        stats = dbLoaded;
+        console.info('[Gambit Stats] Loaded ' + dbKeys.length + ' player(s) from MySQL.');
+        return true;
+      }
+    }
+  }
+
+  // Fall back to JSON
   try {
     var parsed = JsonIO.read(STATS_FILE_PATH);
     if (!parsed) return false;
@@ -150,6 +169,13 @@ function loadStatsFromDisk() {
       loaded[keys[i]] = normalizeEntry(parsed[keys[i]]);
     }
     stats = loaded;
+
+    // Auto-migrate existing JSON data into MySQL on first run
+    if (typeof gambitDbIsEnabled === 'function' && gambitDbIsEnabled() && keys.length > 0) {
+      console.info('[Gambit Stats] Migrating ' + keys.length + ' player(s) from JSON to MySQL...');
+      gambitDbSaveAllStats(stats);
+    }
+
     return true;
   } catch (e) {
     console.error('[Gambit Stats] Failed to load stats file: ' + e);
@@ -176,11 +202,17 @@ function saveStatsToDisk() {
       try { JsonIO.write(STATS_FILE_PATH + '.bak', existing); } catch (bakErr) {}
     }
 
+    // Persist to MySQL when enabled
+    if (typeof gambitDbIsEnabled === 'function' && gambitDbIsEnabled()) {
+      gambitDbSaveAllStats(stats);
+    }
+
+    // Always write JSON as a local backup
     JsonIO.write(STATS_FILE_PATH, stats);
     statsDirty = false;
     statsSaveTicker = 0;
   } catch (e) {
-    console.error('[Gambit Stats] Failed to save stats file: ' + e);
+    console.error('[Gambit Stats] Failed to save stats: ' + e);
   }
 }
 
@@ -218,28 +250,6 @@ function consumeRecentAttackerName(victim) {
   return cached.attackerName || null;
 }
 
-function rememberDownedFinisher(victim, attacker) {
-  var victimId = getPlayerId(victim);
-  var attackerName = attacker && attacker.name && attacker.name.string ? attacker.name.string : null;
-  if (!victimId || !attackerName) return;
-
-  recentDownedFinishers[victimId] = {
-    attackerName: attackerName,
-    expiresAt: Date.now() + LAST_TACZ_ATTACK_TTL_MS
-  };
-}
-
-function consumeDownedFinisherName(victim) {
-  var victimId = getPlayerId(victim);
-  if (!victimId) return null;
-
-  var cached = recentDownedFinishers[victimId];
-  delete recentDownedFinishers[victimId];
-  if (!cached) return null;
-  if (Date.now() > cached.expiresAt) return null;
-  return cached.attackerName || null;
-}
-
 function cleanupExpiredAttackerCache() {
   var now = Date.now();
   var keys = Object.keys(recentPlayerAttackers);
@@ -251,31 +261,6 @@ function cleanupExpiredAttackerCache() {
       delete recentPlayerAttackers[key];
     }
   }
-
-  var downedKeys = Object.keys(recentDownedFinishers);
-  for (var j = 0; j < downedKeys.length; j++) {
-    var downedKey = downedKeys[j];
-    var downedCached = recentDownedFinishers[downedKey];
-    if (!downedCached || now > downedCached.expiresAt) {
-      delete recentDownedFinishers[downedKey];
-    }
-  }
-}
-
-function isDownedPlayer(player) {
-  if (!player || !player.player) return false;
-
-  // PlayerRevive v2.0.16+: downed/bleeding state is stored in persistentData.
-  var tag = player.persistentData;
-  if (!tag) return false;
-
-  try {
-    return !!(tag.contains && tag.contains(PLAYERREVIVE_BLEEDING_KEY)
-      && tag.getBoolean && tag.getBoolean(PLAYERREVIVE_BLEEDING_KEY));
-  } catch (e) {
-  }
-
-  return false;
 }
 
 function getEntry(playerName) {
@@ -287,7 +272,7 @@ function getEntry(playerName) {
 
 function getRoundEntry(playerName) {
   if (!roundStats[playerName]) {
-    roundStats[playerName] = { damage: 0.0, kills: 0 };
+    roundStats[playerName] = { damage: 0.0, kills: 0, deaths: 0 };
   }
   return roundStats[playerName];
 }
@@ -403,9 +388,14 @@ function getAvgDamagePerLife(e) {
 // Combined leaderboard score: rewards players who are strong in both KD and
 // damage output. Neither metric alone is sufficient — this penalises stat-padding
 // in either direction.
+// Composite score: (KD × 0.4) + (Win Rate × 0.3) + (Kills per match × 0.2) + (MVPs × 0.1)
 function getCompositeScore(e) {
   if (!e) return 0;
-  return getKD(e) * getAvgDamagePerLife(e);
+  var kd = getKD(e); // ratio
+  var winRate = getWinPct(e) / 100; // convert percent to 0-1
+  var dpl = getAvgDamagePerLife(e); // damage per life
+  var mvps = e.mvps || 0;
+  return (kd * 0.4) + (winRate * 0.3) + (dpl * 0.2) + (mvps * 0.1);
 }
 
 function getOnlinePlayerByName(server, playerName) {
@@ -432,25 +422,7 @@ function getExistingStatName(name) {
   return null;
 }
 
-function playerHasTag(player, tagName) {
-  if (!player || !tagName) return false;
-  try {
-    if (player.hasTag) return player.hasTag(tagName);
-  } catch (e) {
-  }
-
-  try {
-    if (player.tags && player.tags.includes) return player.tags.includes(tagName);
-  } catch (e) {
-  }
-
-  try {
-    if (player.tags && player.tags.contains) return player.tags.contains(tagName);
-  } catch (e) {
-  }
-
-  return false;
-}
+// Uses hasTagSafe() from gambit_helpers.js
 
 function applyMatchResult(server, targetArg, addMatch, addWin) {
   if (!server || !targetArg) return { count: 0, mode: null };
@@ -463,8 +435,8 @@ function applyMatchResult(server, targetArg, addMatch, addWin) {
     var count = 0;
 
     server.players.forEach(function(p) {
-      var onRed = playerHasTag(p, 'Red');
-      var onBlue = playerHasTag(p, 'Blue');
+      var onRed = hasTagSafe(p, 'Red');
+      var onBlue = hasTagSafe(p, 'Blue');
 
       if (target === 'red' && !onRed) return;
       if (target === 'blue' && !onBlue) return;
@@ -496,8 +468,8 @@ function applyMatchResult(server, targetArg, addMatch, addWin) {
 }
 
 function formatEntry(name, e) {
-  return '§e' + name + '§r — §cDamage per Life: §f' + getAvgDamagePerLife(e).toFixed(1)
-    + '§r | §bKD: §f' + getKD(e).toFixed(2);
+  return '§e' + name + '§r — §bKD: §f' + getKD(e).toFixed(2)
+    + '§r | §cD/L: §f' + getAvgDamagePerLife(e).toFixed(1);
 }
 
 function metricLabel(metric) {
@@ -539,7 +511,9 @@ function getSortedEntriesByMetric(metric) {
   var keys = Object.keys(stats);
   var arr = [];
   for (var i = 0; i < keys.length; i++) {
-    arr.push([keys[i], stats[keys[i]]]);
+    if ((stats[keys[i]].matches || 0) >= LEADERBOARD_MIN_MATCHES) {
+      arr.push([keys[i], stats[keys[i]]]);
+    }
   }
 
   arr.sort(function(a, b) {
@@ -694,15 +668,16 @@ function getSortedEntries() {
   var keys = Object.keys(stats);
   var arr = [];
   for (var i = 0; i < keys.length; i++) {
-    arr.push([keys[i], stats[keys[i]]]);
+    if ((stats[keys[i]].matches || 0) >= LEADERBOARD_MIN_MATCHES) {
+      arr.push([keys[i], stats[keys[i]]]);
+    }
   }
   arr.sort(function(a, b) {
     var scoreDiff = getCompositeScore(b[1]) - getCompositeScore(a[1]);
     if (scoreDiff !== 0) return scoreDiff;
-    // Tiebreaker: higher KD wins; then higher raw damage.
     var kdDiff = getKD(b[1]) - getKD(a[1]);
     if (kdDiff !== 0) return kdDiff;
-    return b[1].damage - a[1].damage;
+    return getAvgDamagePerLife(b[1]) - getAvgDamagePerLife(a[1]);
   });
   return arr;
 }
@@ -712,6 +687,12 @@ function statsSize() {
 }
 
 ServerEvents.loaded(function(event) {
+  // Initialize MySQL connection if configured
+  if (typeof gambitDbIsEnabled === 'function' && gambitDbIsEnabled()) {
+    gambitDbConnect();
+    gambitDbInitTables();
+  }
+
   var loaded = loadStatsFromDisk();
   loadBillboardPos();
   // Push authoritative disk stats to online players' NBT.
@@ -764,6 +745,7 @@ ServerEvents.tick(function(event) {
     billboardUpdateTicker = 0;
     updateBillboard(event.server);
   }
+
 });
 
 // ── Damage event ─────────────────────────────────────────────
@@ -795,16 +777,11 @@ EntityEvents.hurt(function(event) {
   // Track last TACZ attacker for players so kill credit happens once on death.
   if (entity && entity.player) {
     rememberRecentAttacker(entity, player);
-
-    // Cache finisher while target is in downed state; PlayerRevive may clear
-    // the downed flag by the time death event fires.
-    if (isDownedPlayer(entity)) {
-      rememberDownedFinisher(entity, player);
-    }
   }
 
   saveEntryToPlayer(player);
 });
+
 
 // ── Death event ──────────────────────────────────────────────
 // Track player deaths for KD calculations
@@ -817,16 +794,12 @@ EntityEvents.death(function(event) {
 
   var entry = getEntry(deadName);
   entry.deaths += 1;
+  var deadRoundEntry = getRoundEntry(deadName);
+  deadRoundEntry.deaths = (deadRoundEntry.deaths || 0) + 1;
   saveEntryToPlayer(dead);
 
-  // Prefer finisher credit while downed; if nobody finished and victim bled out,
-  // fall back to the last attacker (the downer) for ownership.
-  var killerName = consumeDownedFinisherName(dead);
-  if (!killerName) {
-    killerName = consumeRecentAttackerName(dead);
-  } else {
-    consumeRecentAttackerName(dead);
-  }
+  // Credit the kill to the last TACZ attacker.
+  var killerName = consumeRecentAttackerName(dead);
 
   if (!killerName || killerName === deadName) return;
 
@@ -1059,6 +1032,7 @@ ServerEvents.commandRegistry(function(event) {
                   clearEntryForPlayer(p);
                 });
                 saveStatsToDisk();
+                gambitDbResetAll();
 
                 if (player && player.tell) player.tell('§a[Gambit Stats] Cleared stats for ' + count + ' player(s).');
                 ctx.source.server.players.forEach(function(p) {
@@ -1080,6 +1054,7 @@ ServerEvents.commandRegistry(function(event) {
                 if (targetPlayer) {
                   clearEntryForPlayer(targetPlayer);
                   saveStatsToDisk();
+                  gambitDbResetPlayer(targetPlayer.name.string);
                   if (caller && caller.tell) {
                     caller.tell('§a[Gambit Stats] Reset stats for ' + targetPlayer.name.string + '.');
                     if (caller.uuid !== targetPlayer.uuid) {
@@ -1098,6 +1073,7 @@ ServerEvents.commandRegistry(function(event) {
 
                 stats[resolvedName] = makeDefaultEntry();
                 saveStatsToDisk();
+                gambitDbResetPlayer(resolvedName);
                 if (caller && caller.tell) caller.tell('§a[Gambit Stats] Reset stats for ' + resolvedName + ' (offline).');
                 return 1;
               })
@@ -1143,6 +1119,79 @@ ServerEvents.commandRegistry(function(event) {
             player.tell('  §dWin %: §f' + getWinPct(e).toFixed(1) + '%');
             player.tell('  §6MVPs: §f' + (e.mvps || 0));
             player.tell('§6§l──────────────────────');
+            return 1;
+          })
+      )
+  );
+});
+
+// ── gambit_log_match command ─────────────────────────────────
+// Called from win/tie mcfunctions: gambit_log_match red|blue|tie
+ServerEvents.commandRegistry(function(event) {
+  var Commands = event.commands;
+
+  event.register(
+    Commands.literal('gambit_log_match')
+      .requires(function(src) { return src.hasPermission(2); })
+      .then(
+        Commands.argument('winner', StringArgumentType.word())
+          .executes(function(ctx) {
+            var server = ctx.source.server;
+            var winner = String(StringArgumentType.getString(ctx, 'winner')).toLowerCase();
+
+            if (winner !== 'red' && winner !== 'blue' && winner !== 'tie') return 0;
+
+            // Build player details for match logging
+            var playerDetails = [];
+            if (server && server.players) {
+              server.players.forEach(function(p) {
+                var isRed = hasTagSafe(p, 'Red');
+                var isBlue = hasTagSafe(p, 'Blue');
+                if (!isRed && !isBlue) return;
+                var name = p.name && p.name.string ? p.name.string : null;
+                if (!name) return;
+                var rs = roundStats[name] || { damage: 0, kills: 0, deaths: 0 };
+                playerDetails.push({
+                  name: name,
+                  team: isRed ? 'red' : 'blue',
+                  kills: rs.kills || 0,
+                  deaths: rs.deaths || 0,
+                  damage: rs.damage || 0
+                });
+              });
+            }
+
+            // Log match to MySQL if enabled
+            if (typeof gambitDbIsEnabled === 'function' && gambitDbIsEnabled()) {
+              // Resolve map info from JS globals set by gambit_maps.js
+              var mapId = typeof currentMapId !== 'undefined' ? currentMapId : 0;
+              var modeId = typeof currentModeId !== 'undefined' ? currentModeId : 0;
+              var mapName = 'Unknown';
+
+              if (mapId > 0 && typeof getMapById === 'function') {
+                var mapObj = getMapById(mapId);
+                if (mapObj && mapObj.name) mapName = mapObj.name;
+              }
+
+              var modeName = modeId === 1 ? 'tdm' : 'elimination';
+
+              // Duration from match start time tracked in gambit_maps.js
+              var durationSec = 0;
+              if (typeof matchStartTime !== 'undefined' && matchStartTime > 0) {
+                durationSec = Math.floor((Date.now() - matchStartTime) / 1000);
+              }
+
+              var dbMatchId = gambitDbInsertMatch(mapName, mapId, modeName, winner, durationSec);
+              if (dbMatchId >= 0 && playerDetails.length > 0) {
+                gambitDbInsertMatchPlayers(dbMatchId, playerDetails);
+              }
+
+              if (dbMatchId >= 0) {
+                console.info('[Gambit Stats] Match #' + dbMatchId + ' logged: ' + mapName + ' ' + modeName + ' → ' + winner + ' (' + durationSec + 's, ' + playerDetails.length + ' players)');
+              }
+            }
+
+            markStatsDirty();
             return 1;
           })
       )

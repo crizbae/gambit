@@ -1,4 +1,0 @@
-item replace entity @a[tag=marksman,gamemode=!creative,gamemode=!spectator] hotbar.0 with tacz:modern_kinetic_gun{AttachmentGRIP:{Count:0b,id:"minecraft:air"},AttachmentMUZZLE:{Count:0b,id:"minecraft:air"},AttachmentSCOPE:{Count:1b,id:"tacz:attachment",tag:{AttachmentId:"tacz:scope_elcan_4x",ZoomNumber:8}},AttachmentSTOCK:{Count:0b,id:"minecraft:air"},GunCurrentAmmoCount:15,GunFireMode:"SEMI",GunId:"tacz:sks_tactical",HasBulletInBarrel:1b,RepairCost:0,display:{Name:'{"text":"Vigil","italic":false}'}}
-item replace entity @a[tag=marksman,gamemode=!creative,gamemode=!spectator] hotbar.1 with tacz:modern_kinetic_gun{GunCurrentAmmoCount:7,GunFireMode:"SEMI",GunId:"tacz:m1911",HasBulletInBarrel:1b}
-item replace entity @a[tag=marksman,gamemode=!creative,gamemode=!spectator] hotbar.2 with marbledsfirstaid:panacea_pills{Damage:0}
-item replace entity @a[tag=marksman,gamemode=!creative,gamemode=!spectator] hotbar.3 with marbledsfirstaid:panacea_pills{Damage:0}

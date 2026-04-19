@@ -14,10 +14,7 @@
 //   /setgoal <n>   - Set the TDM kill target (OP only, 1–500).
 //                    Broadcasts the new target to all players.
 //
-//   /setmap <preset> - Announce and stage the next map (OP only).
-//                    Presets: forest, forest2, trenches, tdm_forest,
-//                             training_grounds, tdm_training_grounds, tdm_mall
-//                    Displays persistently in the lobby actionbar.
+// Map commands (/setmap, /start) are in gambit_maps.js.
 //
 // Notes:
 //   - Queue state is controlled by player tag: gun_optout
@@ -26,26 +23,6 @@
 
 var OPT_OUT_TAG = 'gun_optout';
 var IntegerArgumentType = Java.loadClass('com.mojang.brigadier.arguments.IntegerArgumentType');
-
-function hasTagSafe(player, tagName) {
-  if (!player || !tagName) return false;
-  try {
-    if (player.hasTag) return player.hasTag(tagName);
-  } catch (e) {
-  }
-
-  try {
-    if (player.tags && player.tags.includes) return player.tags.includes(tagName);
-  } catch (e) {
-  }
-
-  try {
-    if (player.tags && player.tags.contains) return player.tags.contains(tagName);
-  } catch (e) {
-  }
-
-  return false;
-}
 
 function runForPlayer(player, command) {
   if (!player || !player.server || !command) return;
@@ -98,17 +75,6 @@ function tellQueueStatus(player) {
   player.tell('§7Use §f/spectate §7to opt out.');
 }
 
-function announceNextMap(server, mapId, modeId, modeName, mapName, modeColor, bossbarColor) {
-  server.runCommandSilent('scoreboard players set #nextmap nextmap_id ' + mapId);
-  server.runCommandSilent('scoreboard players set #nextmode nextmap_mode ' + modeId);
-  server.runCommandSilent(
-    'bossbar set gun:nextmap name ["",{"text":"Destination: ","color":"gold"},{"text":"' + modeName + '","color":"' + modeColor + '"},{"text":" \u2014 ' + mapName + '","color":"white"}]'
-  );
-  server.runCommandSilent('bossbar set gun:nextmap color ' + bossbarColor);
-  server.runCommandSilent('bossbar set gun:nextmap players @a');
-  server.runCommandSilent('bossbar set gun:nextmap visible true');
-}
-
 ServerEvents.loaded(function(event) {
   event.server.runCommandSilent('scoreboard objectives add nextmap_id dummy');
   event.server.runCommandSilent('scoreboard objectives add nextmap_mode dummy');
@@ -118,6 +84,29 @@ ServerEvents.loaded(function(event) {
   event.server.runCommandSilent('bossbar set gun:nextmap visible false');
   event.server.runCommandSilent('bossbar set gun:nextmap max 1');
   event.server.runCommandSilent('bossbar set gun:nextmap value 1');
+
+  // Match scoreboards — created once at server load, reset between matches
+  event.server.runCommandSilent('scoreboard objectives add rcount dummy');
+  event.server.runCommandSilent('scoreboard objectives add bcount dummy');
+  event.server.runCommandSilent('scoreboard objectives add teams dummy "Players Left"');
+  event.server.runCommandSilent('scoreboard objectives add mode_id dummy');
+  event.server.runCommandSilent('scoreboard objectives add mode_respawns dummy');
+  event.server.runCommandSilent('scoreboard objectives add map_id dummy');
+  event.server.runCommandSilent('scoreboard objectives add tdm_red_kills dummy');
+  event.server.runCommandSilent('scoreboard objectives add tdm_blue_kills dummy');
+  event.server.runCommandSilent('scoreboard objectives add tdm_respawn_timer dummy');
+  event.server.runCommandSilent('scoreboard objectives add spec_respawn_timer dummy');
+  event.server.runCommandSilent('scoreboard objectives add tdm_kills dummy "TDM Kills"');
+  event.server.runCommandSilent('scoreboard objectives add tdm_deaths_counted dummy');
+  event.server.runCommandSilent('scoreboard objectives add gun_deaths deathCount');
+  event.server.runCommandSilent('scoreboard objectives add gun_deaths_prev dummy');
+  event.server.runCommandSilent('scoreboard objectives add ration_roll dummy');
+  event.server.runCommandSilent('scoreboard objectives add pleft_ui_timer dummy');
+  event.server.runCommandSilent('scoreboard objectives add tdm_ui dummy');
+
+  // Ensure teams exist and lobby loop is running
+  event.server.runCommandSilent('function gun:teams/build');
+  event.server.runCommandSilent('schedule function gun:selectors/loop 1t');
 });
 
 ServerEvents.commandRegistry(function(event) {
@@ -182,49 +171,5 @@ ServerEvents.commandRegistry(function(event) {
             return 1;
           })
       )
-  );
-
-  event.register(
-    Commands.literal('setmap')
-      .requires(function(src) { return src.hasPermission(2); })
-      .then(Commands.literal('forest')
-        .executes(function(ctx) {
-          announceNextMap(ctx.source.server, 1, 0, 'Elimination', 'Forest', 'green', 'green');
-          return 1;
-        }))
-      .then(Commands.literal('forest2')
-        .executes(function(ctx) {
-          announceNextMap(ctx.source.server, 2, 0, 'Elimination', 'Forest 2', 'green', 'green');
-          return 1;
-        }))
-      .then(Commands.literal('trenches')
-        .executes(function(ctx) {
-          announceNextMap(ctx.source.server, 3, 0, 'Elimination', 'Trenches', 'green', 'green');
-          return 1;
-        }))
-      .then(Commands.literal('training_grounds')
-        .executes(function(ctx) {
-          announceNextMap(ctx.source.server, 4, 0, 'Elimination', 'Training Grounds', 'green', 'green');
-          return 1;
-        }))
-      .then(Commands.literal('tdm_training_grounds')
-        .executes(function(ctx) {
-          announceNextMap(ctx.source.server, 4, 1, 'TDM', 'Training Grounds', 'aqua', 'blue');
-          return 1;
-        }))
-      .then(Commands.literal('tdm_mall')
-        .executes(function(ctx) {
-          announceNextMap(ctx.source.server, 5, 1, 'TDM', 'Mall', 'aqua', 'blue');
-          return 1;
-        }))
-  );
-
-  event.register(
-    Commands.literal('start')
-      .requires(function(src) { return src.hasPermission(2); })
-      .executes(function(ctx) {
-        ctx.source.server.runCommandSilent('function gun:starts/staged');
-        return 1;
-      })
   );
 });

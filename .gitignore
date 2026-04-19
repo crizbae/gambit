@@ -1,0 +1,5 @@
+# Database credentials
+kubejs/data/gambit_db_config.json
+
+# Backup files
+kubejs/data/gambit_stats.json.bak

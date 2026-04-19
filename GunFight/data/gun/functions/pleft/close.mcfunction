@@ -1,19 +1,24 @@
-scoreboard objectives remove bcount
-scoreboard objectives remove rcount
-scoreboard objectives remove teams
-scoreboard objectives remove mode_id
-scoreboard objectives remove mode_respawns
-scoreboard objectives remove map_id
-scoreboard objectives remove tdm_red_kills
-scoreboard objectives remove tdm_blue_kills
-scoreboard objectives remove tdm_respawn_timer
-scoreboard objectives remove spec_respawn_timer
-scoreboard objectives remove tdm_kills
-scoreboard objectives remove tdm_deaths_counted
-scoreboard objectives remove gun_deaths
-scoreboard objectives remove gun_deaths_prev
-scoreboard objectives remove ration_roll
-scoreboard objectives remove pleft_ui_timer
-scoreboard objectives remove tdm_ui
+# Reset match state (objectives persist across matches)
+scoreboard players set #Red rcount 0
+scoreboard players set #Blue bcount 0
+scoreboard players set Red teams 0
+scoreboard players set Blue teams 0
+scoreboard players set #mode mode_respawns 0
+scoreboard players set #map map_id 0
+scoreboard players set #Red tdm_red_kills 0
+scoreboard players set #Blue tdm_blue_kills 0
+scoreboard players set Red tdm_kills 0
+scoreboard players set Blue tdm_kills 0
+scoreboard players set #ui pleft_ui_timer 0
+scoreboard players set #ration_mod ration_roll 4
+scoreboard players set #warn_gap tdm_ui 5
+scoreboard players set #RedWarn tdm_ui 0
+scoreboard players set #BlueWarn tdm_ui 0
+scoreboard players set #RedLeft tdm_ui 0
+scoreboard players set #BlueLeft tdm_ui 0
+scoreboard players set @a tdm_respawn_timer 0
+scoreboard players set @a spec_respawn_timer 0
+scoreboard players set #mode mode_id -1
+scoreboard objectives setdisplay sidebar
 schedule clear gun:pleft/loop
 schedule clear gun:death/loop
