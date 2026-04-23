@@ -3,7 +3,7 @@
 //    /gambitstats me                      — show your stats (any player)
 //    /gambitstats player <playerName>     — inspect one player (any player)
 //    /gambitstats top <metric>            — show top players by metric (any player)
-//      metrics: kd, winpct, damage, kills, deaths, wins, matches, mvps, dpl
+//      metrics: kd, winpct, damage, kills, deaths, wins, matches, mvps, dpl, assists, streak, revives
 //    /gambitstats postgame                — broadcast post-game top 5 kills, top 5 damage, and MVP (ops/functions)
 //    /gambitstats <playerName>            — inspect one player (ops only, legacy alias)
 //
@@ -29,6 +29,11 @@ var PD_DEATHS = 'gambit_stats_deaths';
 var PD_MATCHES = 'gambit_stats_matches';
 var PD_WINS = 'gambit_stats_wins';
 var PD_MVPS = 'gambit_stats_mvps';
+var PD_DOWNS = 'gambit_downs';
+var PD_ASSISTS = 'gambit_stats_assists';
+var PD_LONGEST_STREAK = 'gambit_stats_longest_streak';
+var PD_REVIVES = 'gambit_stats_revives';
+var DOWNS_CONFIG_FILE = 'kubejs/data/gambit_downs_config.json';
 var LAST_TACZ_ATTACK_TTL_MS = 15000;
 var ATTACKER_CACHE_CLEANUP_INTERVAL_TICKS = 200;
 var STATS_FLUSH_INTERVAL_TICKS = 200;
@@ -42,20 +47,51 @@ var LEADERBOARD_MIN_MATCHES = 10;
 var stats = {};
 var roundStats = {};
 var recentPlayerAttackers = {};
+var currentStreaks = {}; // { playerName: number } — reset on death, not persisted
+var downerNames = {}; // { deadPlayerName: downerName } — most recent downer, used for bleed-out kill credit
+var firstDownerNames = {}; // { deadPlayerName: downerName } — first downer this life, never overwritten, used for assist credit
+var pendingExecutions = []; // { victimName, killerName } — deferred to next tick to avoid hurt-event re-entrancy
+var syringeCounts = {};    // { playerName: syringe count last poll } — for revive tracking
+var recentlyDowned = {};   // { playerName: expiresAtMs } — windows during which a syringe decrease counts as a revive
+var reviveCheckTicker = 0;
 var attackerCacheCleanupTicker = 0;
 var statsSaveTicker = 0;
 var statsDirty = false;
 var billboardUpdateTicker = 0;
 var billboardPos = null; // {x, y, z} — persisted spawn position of the billboard entity
 
+// ── Down limit config ────────────────────────────────────────
+// max_downs: how many times a player can be downed before the next hit kills instantly.
+// bypass_source_types: getMsgId() strings that skip tracking entirely (fall, fire, etc.)
+var downsConfig = { enabled: true, max_downs: 2, bypass_source_types: [] };
+
+function loadDownsConfig() {
+  try {
+    var raw = JsonIO.read(DOWNS_CONFIG_FILE);
+    if (!raw) return;
+    if (typeof raw.enabled === 'boolean') downsConfig.enabled = raw.enabled;
+    if (typeof raw.max_downs === 'number') downsConfig.max_downs = Math.max(1, Math.floor(raw.max_downs));
+    if (raw.bypass_source_types) {
+      var list = [];
+      for (var i = 0; i < raw.bypass_source_types.length; i++) {
+        list.push(String(raw.bypass_source_types[i]));
+      }
+      downsConfig.bypass_source_types = list;
+    }
+  } catch (e) {
+    console.error('[Gambit Downs] Failed to load downs config: ' + e);
+  }
+}
+
 // Load stats from disk immediately on script evaluation.
 // This runs on both server start AND /reload, ensuring offline players
 // are always present in the leaderboard after a script reload.
 loadStatsFromDisk();
 loadBillboardPos();
+loadDownsConfig();
 
 function makeDefaultEntry() {
-  return { damage: 0.0, kills: 0, deaths: 0, matches: 0, wins: 0, mvps: 0 };
+  return { damage: 0.0, kills: 0, deaths: 0, matches: 0, wins: 0, mvps: 0, assists: 0, longest_streak: 0, revives: 0 };
 }
 
 function normalizeEntry(raw) {
@@ -68,6 +104,9 @@ function normalizeEntry(raw) {
   base.matches = Math.floor(Number(raw.matches || 0));
   base.wins = Math.floor(Number(raw.wins || 0));
   base.mvps = Math.floor(Number(raw.mvps || 0));
+  base.assists = Math.floor(Number(raw.assists || 0));
+  base.longest_streak = Math.floor(Number(raw.longest_streak || 0));
+  base.revives = Math.floor(Number(raw.revives || 0));
 
   if (Number.isNaN(base.damage)) base.damage = 0.0;
   if (Number.isNaN(base.kills)) base.kills = 0;
@@ -75,6 +114,9 @@ function normalizeEntry(raw) {
   if (Number.isNaN(base.matches)) base.matches = 0;
   if (Number.isNaN(base.wins)) base.wins = 0;
   if (Number.isNaN(base.mvps)) base.mvps = 0;
+  if (Number.isNaN(base.assists)) base.assists = 0;
+  if (Number.isNaN(base.longest_streak)) base.longest_streak = 0;
+  if (Number.isNaN(base.revives)) base.revives = 0;
 
   return base;
 }
@@ -233,33 +275,66 @@ function rememberRecentAttacker(victim, attacker) {
   var attackerName = attacker && attacker.name && attacker.name.string ? attacker.name.string : null;
   if (!victimId || !attackerName) return;
 
-  recentPlayerAttackers[victimId] = {
-    attackerName: attackerName,
-    expiresAt: Date.now() + LAST_TACZ_ATTACK_TTL_MS
-  };
+  var entry = recentPlayerAttackers[victimId];
+  if (!entry || !entry.all) {
+    entry = { last: attackerName, all: {} };
+    recentPlayerAttackers[victimId] = entry;
+  }
+  entry.last = attackerName;
+  entry.all[attackerName] = Date.now() + LAST_TACZ_ATTACK_TTL_MS;
 }
 
-function consumeRecentAttackerName(victim) {
+// Returns { killerName, assistNames[] } — killerName is the last attacker,
+// assistNames are all other players who hit the victim within the TTL window.
+function consumeRecentAttackInfo(victim) {
   var victimId = getPlayerId(victim);
-  if (!victimId) return null;
+  if (!victimId) return { killerName: null, assistNames: [] };
 
-  var cached = recentPlayerAttackers[victimId];
+  var entry = recentPlayerAttackers[victimId];
   delete recentPlayerAttackers[victimId];
-  if (!cached) return null;
-  if (Date.now() > cached.expiresAt) return null;
-  return cached.attackerName || null;
+  if (!entry) return { killerName: null, assistNames: [] };
+
+  var now = Date.now();
+  var killerName = entry.last || null;
+  var assistNames = [];
+
+  if (!entry.all) return { killerName: killerName, assistNames: [] };
+
+  // Verify killer entry hasn't expired.
+  if (killerName && entry.all[killerName] && now > entry.all[killerName]) {
+    killerName = null;
+  }
+
+  var names = Object.keys(entry.all);
+  for (var i = 0; i < names.length; i++) {
+    var n = names[i];
+    if (n === killerName) continue;
+    if (now <= entry.all[n]) assistNames.push(n);
+  }
+
+  return { killerName: killerName, assistNames: assistNames };
 }
 
 function cleanupExpiredAttackerCache() {
   var now = Date.now();
-  var keys = Object.keys(recentPlayerAttackers);
+  var victimIds = Object.keys(recentPlayerAttackers);
 
-  for (var i = 0; i < keys.length; i++) {
-    var key = keys[i];
-    var cached = recentPlayerAttackers[key];
-    if (!cached || now > cached.expiresAt) {
-      delete recentPlayerAttackers[key];
+  for (var i = 0; i < victimIds.length; i++) {
+    var vid = victimIds[i];
+    var entry = recentPlayerAttackers[vid];
+    if (!entry) { delete recentPlayerAttackers[vid]; continue; }
+
+    if (!entry.all) {
+      // Should not occur, but guard anyway.
+      delete recentPlayerAttackers[vid];
+      continue;
     }
+
+    var names = Object.keys(entry.all);
+    for (var j = 0; j < names.length; j++) {
+      if (now > entry.all[names[j]]) delete entry.all[names[j]];
+    }
+    if (Object.keys(entry.all).length === 0) delete recentPlayerAttackers[vid];
   }
 }
 
@@ -336,6 +411,9 @@ function loadEntryFromPlayer(player) {
   entry.matches = Math.floor(readTagNumber(tag, PD_MATCHES, 0));
   entry.wins = Math.floor(readTagNumber(tag, PD_WINS, 0));
   entry.mvps = Math.floor(readTagNumber(tag, PD_MVPS, 0));
+  entry.assists = Math.floor(readTagNumber(tag, PD_ASSISTS, 0));
+  entry.longest_streak = Math.floor(readTagNumber(tag, PD_LONGEST_STREAK, 0));
+  entry.revives = Math.floor(readTagNumber(tag, PD_REVIVES, 0));
 }
 
 function saveEntryToPlayer(player) {
@@ -351,6 +429,9 @@ function saveEntryToPlayer(player) {
   writeTagNumber(tag, PD_MATCHES, entry.matches, true);
   writeTagNumber(tag, PD_WINS, entry.wins, true);
   writeTagNumber(tag, PD_MVPS, entry.mvps, true);
+  writeTagNumber(tag, PD_ASSISTS, entry.assists || 0, true);
+  writeTagNumber(tag, PD_LONGEST_STREAK, entry.longest_streak || 0, true);
+  writeTagNumber(tag, PD_REVIVES, entry.revives || 0, true);
   markStatsDirty();
 }
 
@@ -385,17 +466,17 @@ function getAvgDamagePerLife(e) {
   return e.damage / Math.max(1, e.deaths);
 }
 
-// Combined leaderboard score: rewards players who are strong in both KD and
-// damage output. Neither metric alone is sufficient — this penalises stat-padding
-// in either direction.
-// Composite score: (KD × 0.4) + (Win Rate × 0.3) + (Kills per match × 0.2) + (MVPs × 0.1)
+// Combined leaderboard score: all four components are on comparable scales so
+// no single metric dominates. KD and win rate are already 0-N ratios; kills
+// per match normalises raw kill counts; MVPs per match is on the same scale.
+// Composite score: (KD × 0.4) + (Win Rate × 0.3) + (Kills per match × 0.2) + (MVPs per match × 0.1)
 function getCompositeScore(e) {
   if (!e) return 0;
-  var kd = getKD(e); // ratio
-  var winRate = getWinPct(e) / 100; // convert percent to 0-1
-  var dpl = getAvgDamagePerLife(e); // damage per life
-  var mvps = e.mvps || 0;
-  return (kd * 0.4) + (winRate * 0.3) + (dpl * 0.2) + (mvps * 0.1);
+  var kd = getKD(e); // kills/deaths ratio
+  var winRate = getWinPct(e) / 100; // 0-1
+  var killsPerMatch = e.kills / Math.max(1, e.matches); // normalised kill rate
+  var mvpsPerMatch = (e.mvps || 0) / Math.max(1, e.matches); // normalised MVP rate
+  return (kd * 0.4) + (winRate * 0.3) + (killsPerMatch * 0.2) + (mvpsPerMatch * 0.1);
 }
 
 function getOnlinePlayerByName(server, playerName) {
@@ -482,6 +563,9 @@ function metricLabel(metric) {
   if (metric === 'matches') return 'Matches';
   if (metric === 'mvps') return 'MVPs';
   if (metric === 'dpl') return 'Damage per Life';
+  if (metric === 'assists') return 'Assists';
+  if (metric === 'streak') return 'Longest Streak';
+  if (metric === 'revives') return 'Revives';
   return null;
 }
 
@@ -496,6 +580,9 @@ function metricValue(e, metric) {
   if (metric === 'matches') return e.matches;
   if (metric === 'mvps') return e.mvps || 0;
   if (metric === 'dpl') return getAvgDamagePerLife(e);
+  if (metric === 'assists') return e.assists || 0;
+  if (metric === 'streak') return e.longest_streak || 0;
+  if (metric === 'revives') return e.revives || 0;
   return NaN;
 }
 
@@ -720,6 +807,10 @@ PlayerEvents.loggedIn(function(event) {
   var name = player && player.name && player.name.string ? player.name.string : null;
   if (!name) return;
 
+  // Reset down counter on join so a disconnect/reconnect between matches starts clean.
+  writeTagNumber(player.persistentData, PD_DOWNS, 0, true);
+  player.server.runCommandSilent('scoreboard players set ' + name + ' gun_downs 0');
+
   if (stats[name]) {
     saveEntryToPlayer(player);
     return;
@@ -729,7 +820,90 @@ PlayerEvents.loggedIn(function(event) {
   markStatsDirty();
 });
 
+EntityEvents.spawned('minecraft:player', function(event) {
+  // Reset PD_DOWNS on every spawn/respawn (covers TDM respawns where EntityEvents.death
+  // may have already fired but persistent data can get reloaded with stale values).
+  // EntityEvents.spawned fires on initial login AND respawn (new entity instance each time).
+  var player = event.entity;
+  var name = player && player.name && player.name.string ? player.name.string : null;
+  if (!name) return;
+  writeTagNumber(player.persistentData, PD_DOWNS, 0, true);
+  // Scoreboard is also reset in respawn_player.mcfunction, but belt-and-suspenders.
+  player.server.runCommandSilent('scoreboard players set ' + name + ' gun_downs 0');
+});
+
+PlayerEvents.loggedOut(function(event) {
+  var player = event.player;
+  var name = player && player.name && player.name.string ? player.name.string : null;
+  if (!name) return;
+
+  // Strip all in-match tags so the player rejoins clean.
+  // Without this, Red/Blue tags persist on the offline entity and reappear on reconnect.
+  var server = player.server;
+  server.runCommandSilent('tag ' + name + ' remove Red');
+  server.runCommandSilent('tag ' + name + ' remove Blue');
+  server.runCommandSilent('tag ' + name + ' remove gun_dead');
+  server.runCommandSilent('tag ' + name + ' remove gun_just_died');
+  server.runCommandSilent('tag ' + name + ' remove gun_spec_tp_pending');
+  server.runCommandSilent('team join lobby ' + name);
+
+  // Clear in-memory tracking state for this player.
+  delete currentStreaks[name];
+  delete syringeCounts[name];
+  delete recentlyDowned[name];
+  delete downerNames[name];
+  delete firstDownerNames[name];
+
+  // If this player was a pending reviver for someone else, nothing to clean up
+  // under the syringe-based system.
+});
+
 ServerEvents.tick(function(event) {
+  // ── Deferred executions ──────────────────────────────────
+  // Processed first each tick so the kill fires as soon as possible after the
+  // hurt event that queued it, but outside that event's dispatch cycle.
+  if (pendingExecutions.length > 0) {
+    var toExecute = pendingExecutions.slice(0);
+    pendingExecutions = [];
+    for (var _ei = 0; _ei < toExecute.length; _ei++) {
+      var pe = toExecute[_ei];
+      if (!pe.victimName) continue;
+      var peTarget = getOnlinePlayerByName(event.server, pe.victimName);
+      if (peTarget) {
+        // Clear the hurt cooldown so the execution damage isn't blocked.
+        try { peTarget.invulnerableTime = 0; } catch (_ie) {}
+        // Reset downs here — EntityEvents.death may not fire reliably for
+        // players already in PlayerRevive's bleeding state.
+        writeTagNumber(peTarget.persistentData, PD_DOWNS, 0, true);
+      }
+      // Reset scoreboard regardless (works by name even if entity ref is stale).
+      event.server.runCommandSilent('scoreboard players set ' + pe.victimName + ' gun_downs 0');
+      // Close the downed window — this player is being executed, not revived.
+      delete recentlyDowned[pe.victimName];
+      if (pe.killerName) {
+        var killerLookup = getOnlinePlayerByName(event.server, pe.killerName);
+        var execKillerTeam = killerLookup
+          ? (hasTagSafe(killerLookup, 'Red') ? 'Red' : (hasTagSafe(killerLookup, 'Blue') ? 'Blue' : null))
+          : null;
+        var vTeam = pe.victimTeam || null;
+        var kTeam = execKillerTeam;
+        var vColor = vTeam === 'Red' ? 'red' : (vTeam === 'Blue' ? 'aqua' : 'white');
+        var kColor = kTeam === 'Red' ? 'red' : (kTeam === 'Blue' ? 'aqua' : 'white');
+        var tellrawParts = ['""'];
+        if (vTeam) tellrawParts.push('{"text":"[' + vTeam + '] ","color":"' + vColor + '"}');
+        tellrawParts.push('{"text":"' + pe.victimName + '","color":"' + vColor + '"}');
+        tellrawParts.push('{"text":" was shot by ","color":"white"}');
+        if (kTeam) tellrawParts.push('{"text":"[' + kTeam + '] ","color":"' + kColor + '"}');
+        tellrawParts.push('{"text":"' + pe.killerName + '","color":"' + kColor + '"}');
+        event.server.runCommandSilent('tellraw @a [' + tellrawParts.join(',') + ']');
+      }
+
+      event.server.runCommandSilent('gamerule showDeathMessages false');
+      event.server.runCommandSilent('damage ' + pe.victimName + ' 1000 gambit:execution');
+      event.server.runCommandSilent('gamerule showDeathMessages true');
+    }
+  }
+
   attackerCacheCleanupTicker += 1;
   if (attackerCacheCleanupTicker >= ATTACKER_CACHE_CLEANUP_INTERVAL_TICKS) {
     attackerCacheCleanupTicker = 0;
@@ -746,6 +920,65 @@ ServerEvents.tick(function(event) {
     updateBillboard(event.server);
   }
 
+  // Revive tracking: poll syringe counts every 10 ticks for in-match players.
+  // marbledsfirstaid:syringe is consumed on use. Any decrease in count while the
+  // player has a Red or Blue tag means they revived a teammate.
+  reviveCheckTicker += 1;
+  if (reviveCheckTicker >= 10) {
+    reviveCheckTicker = 0;
+    if (event.server && event.server.players) {
+      event.server.players.forEach(function(p) {
+        if (!p) return;
+        var pName = p.name && p.name.string ? p.name.string : null;
+        if (!pName) return;
+        if (!hasTagSafe(p, 'Red') && !hasTagSafe(p, 'Blue')) return;
+
+        var currentCount = 0;
+        try {
+          var inv = p.inventory;
+          var invSize = inv.getContainerSize ? inv.getContainerSize() : 41;
+          for (var _si = 0; _si < invSize; _si++) {
+            var _stack = inv.getItem(_si);
+            if (_stack && !_stack.isEmpty() && String(_stack.id) === 'marbledsfirstaid:syringe') {
+              currentCount += _stack.getCount();
+            }
+          }
+        } catch (_se) {}
+
+        var prevCount = syringeCounts[pName];
+        if (typeof prevCount === 'number' && currentCount < prevCount) {
+          // Only credit when a downed player is within 4 blocks of the reviver.
+          // This prevents false credits from moving syringes while nobody nearby is bleeding.
+          var _now = Date.now();
+          var _rdKeys = Object.keys(recentlyDowned);
+          var _creditedRdName = null;
+          for (var _ri = _rdKeys.length - 1; _ri >= 0; _ri--) {
+            var _rdName = _rdKeys[_ri];
+            if (_now >= recentlyDowned[_rdName]) { delete recentlyDowned[_rdName]; continue; }
+            var _downedP = getOnlinePlayerByName(event.server, _rdName);
+            if (!_downedP) continue;
+            var _dx = _downedP.x - p.x;
+            var _dy = _downedP.y - p.y;
+            var _dz = _downedP.z - p.z;
+            if ((_dx*_dx + _dy*_dy + _dz*_dz) <= 16) { _creditedRdName = _rdName; break; } // 4 blocks
+          }
+          if (_creditedRdName) {
+            var used = 1; // cap at 1 per poll — a real revive consumes exactly 1 syringe
+            loadEntryFromPlayer(p);
+            var reviverEntry = getEntry(pName);
+            reviverEntry.revives = (reviverEntry.revives || 0) + used;
+            markStatsDirty();
+            saveEntryToPlayer(p);
+            // Consume the downed window so no second syringe use near the (now alive) player
+            // causes a duplicate revive credit for the same down event.
+            delete recentlyDowned[_creditedRdName];
+          }
+        }
+        syringeCounts[pName] = currentCount;
+      });
+    }
+  }
+
 });
 
 // ── Damage event ─────────────────────────────────────────────
@@ -756,32 +989,105 @@ EntityEvents.hurt(function(event) {
   var source = event.source;
   var damage = event.damage;
 
-  // Must be a TACZ bullet hit
+  // Guard: skip re-entry from our own /kill execution command.
+  var _srcMsgId = '';
+  try { _srcMsgId = String(source.getMsgId()); } catch (e) {}
+  // Check both the message_id form (gambit.execution) and the registry-key form
+  // (gambit:execution) — KubeJS/Rhino may return either depending on the version.
+  if (_srcMsgId === 'gambit.execution' || _srcMsgId === 'gambit:execution'
+      || _srcMsgId === 'generic_kill' || _srcMsgId === 'outOfWorld') return;
+
+  // ── TACZ stats tracking ───────────────────────────────────
   var bullet = source.immediate;
-  if (!bullet) return;
-  if (bullet.type.toString().indexOf('tacz') === -1) return;
+  var isTaczBullet = bullet && bullet.type.toString().indexOf('tacz') !== -1;
+  if (isTaczBullet) {
+    var shooter = source.player;
+    if (shooter) {
+      var shooterName = shooter.name.string;
+      var entry = getEntry(shooterName);
+      var roundEntry = getRoundEntry(shooterName);
 
-  // Must have been fired by a player
-  var player = source.player;
-  if (!player) return;
+      // Cap to remaining health to avoid overkill inflation
+      var actualDamage = Math.min(damage, entity.health);
+      entry.damage += actualDamage;
+      roundEntry.damage += actualDamage;
 
-  var playerName = player.name.string;
-  var entry = getEntry(playerName);
-  var roundEntry = getRoundEntry(playerName);
+      // Track last TACZ attacker for kill credit on death.
+      if (entity && entity.player) {
+        rememberRecentAttacker(entity, shooter);
+      }
 
-  // Cap to remaining health to avoid overkill inflation
-  var actualDamage = Math.min(damage, entity.health);
-  entry.damage += actualDamage;
-  roundEntry.damage += actualDamage;
-
-  // Track last TACZ attacker for players so kill credit happens once on death.
-  if (entity && entity.player) {
-    rememberRecentAttacker(entity, player);
+      saveEntryToPlayer(shooter);
+    }
   }
 
-  saveEntryToPlayer(player);
-});
+  // ── Down limit (both modes) ───────────────────────────────
+  // Counts how many times a player has been downed (revived from PlayerRevive).
+  // On a lethal hit:
+  //   - If downs < max_downs: let it through untouched. PlayerRevive will down
+  //     the player normally. We increment the counter on the *next* real death
+  //     event via the gun_deaths scoreboard (handled in detect.mcfunction).
+  //   - If downs >= max_downs: absorb the hit (prevent PlayerRevive from
+  //     catching it) then immediately kill the player for real.
+  if (downsConfig.enabled
+      && entity && entity.player
+      && (hasTagSafe(entity, 'Red') || hasTagSafe(entity, 'Blue'))
+      && !hasTagSafe(entity, 'gun_just_died')
+      && damage >= entity.health) {
 
+    var srcMsgId = '';
+    try { srcMsgId = String(source.getMsgId()); } catch (e) {}
+    var isBypassed = downsConfig.bypass_source_types.indexOf(srcMsgId) !== -1;
+    // Belt-and-suspenders: also skip execution here in case the top-level guard
+    // failed to match (e.g. getMsgId returns the registry key instead of message_id).
+    if (isBypassed || srcMsgId === 'gambit.execution' || srcMsgId === 'gambit:execution') return;
+
+    var victimName = getPlayerName(entity);
+    var currentDowns = Math.floor(readTagNumber(entity.persistentData, PD_DOWNS, 0));
+
+    // Peek at attacker cache (don't consume — EntityEvents.death still needs it).
+    var victimId = getPlayerId(entity);
+    var downerCached = victimId ? recentPlayerAttackers[victimId] : null;
+    var downerNameHurt = downerCached ? (downerCached.last || null) : null;
+
+    // Store downer for bleed-out kill credit (always updated to most recent downer).
+    // firstDownerNames is set once per life and never overwritten — survives revives for
+    // assist credit even if a different player later delivers the killing blow.
+    if (downerNameHurt && victimName && downerNameHurt !== victimName) {
+      downerNames[victimName] = downerNameHurt;
+      if (!firstDownerNames[victimName]) {
+        firstDownerNames[victimName] = downerNameHurt;
+      }
+    }
+    // Being downed resets the victim's kill streak.
+    if (victimName) currentStreaks[victimName] = 0;
+
+    // Always let the hit through — PlayerRevive will down the player normally.
+    // Increment the down counter on every lethal hit.
+    var newDowns = currentDowns + 1;
+    writeTagNumber(entity.persistentData, PD_DOWNS, newDowns, true);
+    if (victimName) {
+      event.server.runCommandSilent('scoreboard players set ' + victimName + ' gun_downs ' + newDowns);
+      // Open a 15-second window during which a reviver's syringe decrease gets credited.
+      recentlyDowned[victimName] = Date.now() + 15000;
+    }
+
+    // If they were already at their down limit, queue an execution for next tick.
+    // PlayerRevive will down them briefly, then gambit:execution kills them for real.
+
+    if (currentDowns >= downsConfig.max_downs && victimName) {
+      var _alreadyQueued = false;
+      for (var _pei = 0; _pei < pendingExecutions.length; _pei++) {
+        if (pendingExecutions[_pei].victimName === victimName) { _alreadyQueued = true; break; }
+      }
+      if (!_alreadyQueued) {
+        var execVictimTeam = hasTagSafe(entity, 'Red') ? 'Red' : (hasTagSafe(entity, 'Blue') ? 'Blue' : null);
+        pendingExecutions.push({ victimName: victimName, killerName: downerNameHurt || null, victimTeam: execVictimTeam });
+      }
+    }
+  }
+
+});
 
 // ── Death event ──────────────────────────────────────────────
 // Track player deaths for KD calculations
@@ -792,16 +1098,57 @@ EntityEvents.death(function(event) {
   var deadName = dead.name && dead.name.string ? dead.name.string : null;
   if (!deadName) return;
 
+  // PlayerRevive cancels LivingDeathEvent (HIGH priority) before KubeJS sees it,
+  // so this handler only fires for true final deaths: gambit:execution and bled_to_death.
+  // Down tracking (PD_DOWNS, downerNames, streak reset) is handled in EntityEvents.hurt.
+  var sourceId = '';
+  try { sourceId = String(event.source.getMsgId()); } catch (e) {}
+  var isBleedOut = (sourceId === 'bled_to_death');
+
+  // Consume attacker cache — killerName is the last shooter; assistNames are
+  // all others who hit within the TTL, but assist credit uses firstDowner instead.
+  var _attackInfo = consumeRecentAttackInfo(dead);
+  var killerName = _attackInfo.killerName;
+
+  // Reset victim streak on final death.
+  currentStreaks[deadName] = 0;
+  // Close the downed window — player is truly dead, no revive possible.
+  delete recentlyDowned[deadName];
+
+  // Cancel any queued execution — they're already dead.
+  for (var _pi = pendingExecutions.length - 1; _pi >= 0; _pi--) {
+    if (pendingExecutions[_pi].victimName === deadName) {
+      pendingExecutions.splice(_pi, 1);
+    }
+  }
+
+  // Reset down counter so the next life starts clean.
+  writeTagNumber(dead.persistentData, PD_DOWNS, 0, true);
+  event.server.runCommandSilent('scoreboard players set ' + deadName + ' gun_downs 0');
+
+  // Final death — count the death stat.
   var entry = getEntry(deadName);
   entry.deaths += 1;
   var deadRoundEntry = getRoundEntry(deadName);
   deadRoundEntry.deaths = (deadRoundEntry.deaths || 0) + 1;
   saveEntryToPlayer(dead);
 
-  // Credit the kill to the last TACZ attacker.
-  var killerName = consumeRecentAttackerName(dead);
+  // For bleed-outs the attacker cache has almost certainly expired (bleed timer is 60s,
+  // cache TTL is 15s). Fall back to the stored downer as the kill credit.
+  if ((!killerName || killerName === deadName) && isBleedOut) {
+    killerName = downerNames[deadName] || null;
+  }
 
-  if (!killerName || killerName === deadName) return;
+  // Consume both downer trackers.
+  // downerNames = most recent downer (already used for bleed-out kill credit above).
+  // firstDownerNames = first person to down them this life (persists through revives) — used for assist.
+  delete downerNames[deadName];
+  var firstDowner = firstDownerNames[deadName];
+  delete firstDownerNames[deadName];
+
+  if (!killerName || killerName === deadName) {
+    return;
+  }
 
   var killerPlayer = getOnlinePlayerByName(event.server, killerName);
   if (killerPlayer) loadEntryFromPlayer(killerPlayer);
@@ -810,9 +1157,38 @@ EntityEvents.death(function(event) {
   var killerRoundEntry = getRoundEntry(killerName);
   killerEntry.kills += 1;
   killerRoundEntry.kills += 1;
-  markStatsDirty();
 
+  // Kill streak tracking.
+  currentStreaks[killerName] = (currentStreaks[killerName] || 0) + 1;
+  var streak = currentStreaks[killerName];
+  if (streak > (killerEntry.longest_streak || 0)) {
+    killerEntry.longest_streak = streak;
+  }
+
+  markStatsDirty();
   if (killerPlayer) saveEntryToPlayer(killerPlayer);
+
+  // Assists: only credit the first player who downed the victim this life.
+  // This persists through revives — if A downs B, B gets revived, then C kills B,
+  // A still gets the assist regardless of timing.
+  var _assistSet = {};
+  if (firstDowner && firstDowner !== killerName && firstDowner !== deadName) {
+    _assistSet[firstDowner] = true;
+  }
+
+  var _assistList = Object.keys(_assistSet);
+  for (var _aci = 0; _aci < _assistList.length; _aci++) {
+    var _assistorName = _assistList[_aci];
+    var _assistorPlayer = getOnlinePlayerByName(event.server, _assistorName);
+    if (_assistorPlayer) loadEntryFromPlayer(_assistorPlayer);
+    var _assistorEntry = getEntry(_assistorName);
+    _assistorEntry.assists = (_assistorEntry.assists || 0) + 1;
+    markStatsDirty();
+    if (_assistorPlayer) {
+      saveEntryToPlayer(_assistorPlayer);
+      _assistorPlayer.tell('§7[§eAssist§7] You helped take down §c' + deadName + '§7, finished by §c' + killerName + '§7.');
+    }
+  }
 });
 
 // ── Commands ─────────────────────────────────────────────────
@@ -861,6 +1237,9 @@ ServerEvents.commandRegistry(function(event) {
             player.tell('  §4Kills: §f' + e.kills);
             player.tell('  §8Deaths: §f' + e.deaths);
             player.tell('  §bKD: §f' + getKD(e).toFixed(2));
+            player.tell('  §eAssists: §f' + (e.assists || 0));
+            player.tell('  §dLongest Streak: §f' + (e.longest_streak || 0));
+            player.tell('  §aRevives: §f' + (e.revives || 0));
             player.tell('  §6Matches: §f' + e.matches);
             player.tell('  §aWins: §f' + e.wins);
             player.tell('  §dWin %: §f' + getWinPct(e).toFixed(1) + '%');
@@ -882,7 +1261,7 @@ ServerEvents.commandRegistry(function(event) {
                 var metric = String(StringArgumentType.getString(ctx, 'metric')).toLowerCase();
                 var label = metricLabel(metric);
                 if (!label) {
-                  player.tell('§e[Gambit Stats] Unknown metric "' + metric + '". Use: kd, winpct, damage, kills, deaths, wins, matches, mvps, dpl.');
+                  player.tell('§e[Gambit Stats] Unknown metric "' + metric + '". Use: kd, winpct, damage, kills, deaths, wins, matches, mvps, dpl, assists, streak, revives.');
                   return 1;
                 }
 
@@ -995,12 +1374,19 @@ ServerEvents.commandRegistry(function(event) {
                   return 1;
                 }
 
+                // Sync from NBT if the target is currently online.
+                var targetOnlineV = getOnlinePlayerByName(ctx.source.server, target);
+                if (targetOnlineV) loadEntryFromPlayer(targetOnlineV);
+
                 var e = stats[target];
                 viewer.tell('§6§l── Gambit Stats: ' + target + ' ──');
-                viewer.tell('  §cDamage dealt: §f' + e.damage.toFixed(2));
+                viewer.tell('  §cDamage per Life: §f' + getAvgDamagePerLife(e).toFixed(2));
                 viewer.tell('  §4Kills: §f' + e.kills);
                 viewer.tell('  §8Deaths: §f' + e.deaths);
                 viewer.tell('  §bKD: §f' + getKD(e).toFixed(2));
+                viewer.tell('  §eAssists: §f' + (e.assists || 0));
+                viewer.tell('  §dLongest Streak: §f' + (e.longest_streak || 0));
+                viewer.tell('  §aRevives: §f' + (e.revives || 0));
                 viewer.tell('  §6Matches: §f' + e.matches);
                 viewer.tell('  §aWins: §f' + e.wins);
                 viewer.tell('  §dWin %: §f' + getWinPct(e).toFixed(1) + '%');
@@ -1033,6 +1419,7 @@ ServerEvents.commandRegistry(function(event) {
                 });
                 saveStatsToDisk();
                 gambitDbResetAll();
+                updateBillboard(ctx.source.server);
 
                 if (player && player.tell) player.tell('§a[Gambit Stats] Cleared stats for ' + count + ' player(s).');
                 ctx.source.server.players.forEach(function(p) {
@@ -1108,12 +1495,19 @@ ServerEvents.commandRegistry(function(event) {
               return 1;
             }
 
+            // Sync from NBT if the target is currently online.
+            var targetOnline = getOnlinePlayerByName(ctx.source.server, target);
+            if (targetOnline) loadEntryFromPlayer(targetOnline);
+
             var e = stats[target];
             player.tell('§6§l── Gambit Stats: ' + target + ' ──');
-            player.tell('  §cDamage dealt: §f' + e.damage.toFixed(2));
+            player.tell('  §cDamage per Life: §f' + getAvgDamagePerLife(e).toFixed(2));
             player.tell('  §4Kills: §f' + e.kills);
             player.tell('  §8Deaths: §f' + e.deaths);
             player.tell('  §bKD: §f' + getKD(e).toFixed(2));
+            player.tell('  §eAssists: §f' + (e.assists || 0));
+            player.tell('  §dLongest Streak: §f' + (e.longest_streak || 0));
+            player.tell('  §aRevives: §f' + (e.revives || 0));
             player.tell('  §6Matches: §f' + e.matches);
             player.tell('  §aWins: §f' + e.wins);
             player.tell('  §dWin %: §f' + getWinPct(e).toFixed(1) + '%');
@@ -1261,3 +1655,58 @@ ServerEvents.commandRegistry(function(event) {
       )
   );
 });
+
+// ── gambit_reset_downs ────────────────────────────────────────
+// Called from gun:starts/general at match start.
+// Resets each online player's persistent down counter and syncs the scoreboard.
+ServerEvents.commandRegistry(function(event) {
+  var Commands = event.commands;
+  event.register(
+    Commands.literal('gambit_reset_downs')
+      .requires(function(src) { return src.hasPermission(2); })
+      .executes(function(ctx) {
+        ctx.source.server.players.forEach(function(p) {
+          var name = getPlayerName(p);
+          if (!name) return;
+          writeTagNumber(p.persistentData, PD_DOWNS, 0, true);
+          ctx.source.server.runCommandSilent('scoreboard players set ' + name + ' gun_downs 0');
+        });
+        // Clear in-match streak, assist, and revive tracking state for a clean round.
+        currentStreaks = {};
+        downerNames = {};
+        firstDownerNames = {};
+        pendingExecutions = [];  // prevent stale executions from firing at start of next match
+        syringeCounts = {};      // force clean syringe baseline so first poll doesn't false-credit
+        recentlyDowned = {};     // discard any downed windows that bled over from last match
+        roundStats = {};         // clear per-round kill/damage tallies so postgame shows only this match
+        return 1;
+      })
+  );
+});
+
+// ── gambit_set_downs (DEBUG) ──────────────────────────────────
+// Temporarily useful for solo testing the down/execution path.
+// Usage: /gambit_set_downs <count>
+ServerEvents.commandRegistry(function(event) {
+  var Commands = event.commands;
+  var IntegerArgumentType = Java.loadClass('com.mojang.brigadier.arguments.IntegerArgumentType');
+  event.register(
+    Commands.literal('gambit_set_downs')
+      .requires(function(src) { return src.hasPermission(2); })
+      .then(
+        Commands.argument('count', IntegerArgumentType.integer(0, 10))
+          .executes(function(ctx) {
+            var player = ctx.source.player;
+            if (!player) return 0;
+            var count = IntegerArgumentType.getInteger(ctx, 'count');
+            var name = getPlayerName(player);
+            writeTagNumber(player.persistentData, PD_DOWNS, count, true);
+            ctx.source.server.runCommandSilent('scoreboard players set ' + name + ' gun_downs ' + count);
+            player.tell('§a[Gambit Debug] Down count set to ' + count + ' (max: ' + downsConfig.max_downs + ').');
+            return 1;
+          })
+      )
+  );
+});
+
+

@@ -112,9 +112,39 @@ function gambitDbInitTables() {
       + ' matches_played INT NOT NULL DEFAULT 0,'
       + ' wins INT NOT NULL DEFAULT 0,'
       + ' mvps INT NOT NULL DEFAULT 0,'
+      + ' assists INT NOT NULL DEFAULT 0,'
+      + ' longest_streak INT NOT NULL DEFAULT 0,'
+      + ' revives INT NOT NULL DEFAULT 0,'
       + ' updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'
       + ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
     );
+
+    // Migration: add new columns to existing installations.
+    // Uses a separate Statement + INFORMATION_SCHEMA to reliably detect missing columns.
+    try {
+      var mStmt = conn.createStatement();
+      var newColumns = [
+        ['assists',        'INT NOT NULL DEFAULT 0'],
+        ['longest_streak', 'INT NOT NULL DEFAULT 0'],
+        ['revives',        'INT NOT NULL DEFAULT 0']
+      ];
+      for (var ci = 0; ci < newColumns.length; ci++) {
+        var colRs = mStmt.executeQuery(
+          "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE()"
+          + " AND TABLE_NAME = 'gambit_player_stats' AND COLUMN_NAME = '" + newColumns[ci][0] + "'"
+        );
+        colRs.next();
+        var colExists = colRs.getInt(1) > 0;
+        colRs.close();
+        if (!colExists) {
+          mStmt.executeUpdate('ALTER TABLE gambit_player_stats ADD COLUMN ' + newColumns[ci][0] + ' ' + newColumns[ci][1]);
+          console.info('[Gambit DB] Migration: added column ' + newColumns[ci][0]);
+        }
+      }
+      mStmt.close();
+    } catch (mErr) {
+      console.error('[Gambit DB] Schema migration failed: ' + mErr);
+    }
 
     stmt.executeUpdate(
       'CREATE TABLE IF NOT EXISTS gambit_match_history ('
@@ -161,7 +191,7 @@ function gambitDbLoadAllStats() {
   try {
     var stmt = conn.createStatement();
     var rs = stmt.executeQuery(
-      'SELECT player_name, damage, kills, deaths, matches_played, wins, mvps FROM gambit_player_stats'
+      'SELECT player_name, damage, kills, deaths, matches_played, wins, mvps, assists, longest_streak, revives FROM gambit_player_stats'
     );
     var result = {};
     while (rs.next()) {
@@ -171,7 +201,10 @@ function gambitDbLoadAllStats() {
         deaths: rs.getInt('deaths'),
         matches: rs.getInt('matches_played'),
         wins: rs.getInt('wins'),
-        mvps: rs.getInt('mvps')
+        mvps: rs.getInt('mvps'),
+        assists: rs.getInt('assists'),
+        longest_streak: rs.getInt('longest_streak'),
+        revives: rs.getInt('revives')
       };
     }
     rs.close();
@@ -189,11 +222,13 @@ function gambitDbSavePlayer(playerName, entry) {
 
   try {
     var ps = conn.prepareStatement(
-      'INSERT INTO gambit_player_stats (player_name, damage, kills, deaths, matches_played, wins, mvps)'
-      + ' VALUES (?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO gambit_player_stats (player_name, damage, kills, deaths, matches_played, wins, mvps, assists, longest_streak, revives)'
+      + ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       + ' ON DUPLICATE KEY UPDATE damage=VALUES(damage), kills=VALUES(kills),'
       + ' deaths=VALUES(deaths), matches_played=VALUES(matches_played),'
-      + ' wins=VALUES(wins), mvps=VALUES(mvps)'
+      + ' wins=VALUES(wins), mvps=VALUES(mvps),'
+      + ' assists=VALUES(assists), longest_streak=VALUES(longest_streak),'
+      + ' revives=VALUES(revives)'
     );
     ps.setString(1, String(playerName));
     ps.setDouble(2, Number(entry.damage) || 0);
@@ -202,6 +237,9 @@ function gambitDbSavePlayer(playerName, entry) {
     ps.setInt(5, Math.floor(Number(entry.matches) || 0) | 0);
     ps.setInt(6, Math.floor(Number(entry.wins) || 0) | 0);
     ps.setInt(7, Math.floor(Number(entry.mvps) || 0) | 0);
+    ps.setInt(8, Math.floor(Number(entry.assists) || 0) | 0);
+    ps.setInt(9, Math.floor(Number(entry.longest_streak) || 0) | 0);
+    ps.setInt(10, Math.floor(Number(entry.revives) || 0) | 0);
     ps.executeUpdate();
     ps.close();
     return true;
@@ -217,11 +255,13 @@ function gambitDbSaveAllStats(statsObj) {
 
   try {
     var ps = conn.prepareStatement(
-      'INSERT INTO gambit_player_stats (player_name, damage, kills, deaths, matches_played, wins, mvps)'
-      + ' VALUES (?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO gambit_player_stats (player_name, damage, kills, deaths, matches_played, wins, mvps, assists, longest_streak, revives)'
+      + ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       + ' ON DUPLICATE KEY UPDATE damage=VALUES(damage), kills=VALUES(kills),'
       + ' deaths=VALUES(deaths), matches_played=VALUES(matches_played),'
-      + ' wins=VALUES(wins), mvps=VALUES(mvps)'
+      + ' wins=VALUES(wins), mvps=VALUES(mvps),'
+      + ' assists=VALUES(assists), longest_streak=VALUES(longest_streak),'
+      + ' revives=VALUES(revives)'
     );
 
     var keys = Object.keys(statsObj);
@@ -235,6 +275,9 @@ function gambitDbSaveAllStats(statsObj) {
       ps.setInt(5, Math.floor(Number(e.matches) || 0) | 0);
       ps.setInt(6, Math.floor(Number(e.wins) || 0) | 0);
       ps.setInt(7, Math.floor(Number(e.mvps) || 0) | 0);
+      ps.setInt(8, Math.floor(Number(e.assists) || 0) | 0);
+      ps.setInt(9, Math.floor(Number(e.longest_streak) || 0) | 0);
+      ps.setInt(10, Math.floor(Number(e.revives) || 0) | 0);
       ps.addBatch();
     }
 
@@ -253,7 +296,7 @@ function gambitDbResetPlayer(playerName) {
 
   try {
     var ps = conn.prepareStatement(
-      'UPDATE gambit_player_stats SET damage=0, kills=0, deaths=0, matches_played=0, wins=0, mvps=0 WHERE player_name=?'
+      'UPDATE gambit_player_stats SET damage=0, kills=0, deaths=0, matches_played=0, wins=0, mvps=0, assists=0, longest_streak=0, revives=0 WHERE player_name=?'
     );
     ps.setString(1, String(playerName));
     ps.executeUpdate();
@@ -272,7 +315,7 @@ function gambitDbResetAll() {
   try {
     var stmt = conn.createStatement();
     stmt.executeUpdate(
-      'UPDATE gambit_player_stats SET damage=0, kills=0, deaths=0, matches_played=0, wins=0, mvps=0'
+      'UPDATE gambit_player_stats SET damage=0, kills=0, deaths=0, matches_played=0, wins=0, mvps=0, assists=0, longest_streak=0, revives=0'
     );
     stmt.close();
     return true;

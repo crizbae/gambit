@@ -76,6 +76,33 @@ var MAPS = [
     red_spawn: '732.51 68.00 -734.47 -4949.67 -2.55',
     blue_spawn: '588.58 68.00 -734.51 -4770.05 -0.30',
     spectator: '656.50 73.15 -720.71 -4859.61 14.40'
+  },
+  {
+    id: 6,
+    name: 'SnowFront',
+    preset: 'snowfront',
+    modes: ['elimination'],
+    red_spawn: '584.5 57.50 -570.5 -90 0',
+    blue_spawn: '802.5 57.5 -570.5 90 0',
+    spectator: '693 62.00 -570 0 0'
+  },
+  {
+    id: 7,
+    name: 'Utopia',
+    preset: 'utopia',
+    modes: ['tdm'],
+    red_spawn: '120.5 46.50 -1502.5 165 0',
+    blue_spawn: '-119.5 46.50 -1502.5 200 0',
+    spectator: '0.50 60 -1535.5 180 60'
+  },
+  {
+    id: 8,
+    name: 'Solstice',
+    preset: 'solstice',
+    modes: ['elimination'],
+    red_spawn: '345.5 47.50 -381.5 180 0',
+    blue_spawn: '345.5 47.50 -519.5 360 0',
+    spectator: '400 63 -449.5 450 25'
   }
 ];
 
@@ -87,8 +114,8 @@ var currentModeId = 0;
 var matchStartTime = 0; // Date.now() when /start runs — used by gambit_log_match for duration
 
 // ── Autostart state ──────────────────────────────────────────
-var AUTOSTART_DELAY_MS = 60000; // 60 seconds
-var autostartAt = 0;            // Date.now() target, 0 = not scheduled
+var AUTOSTART_DELAY_TICKS = 1200; // 60 seconds (20 ticks/s)
+var autostartTicksLeft = 0;       // 0 = not scheduled
 var autostartLastSecondsLeft = -1; // track last displayed second to avoid redundant bossbar updates
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -128,7 +155,7 @@ function _announceNextMap(server, mapId, modeId, modeName, mapName, modeColor, b
   server.runCommandSilent('scoreboard players set #nextmap nextmap_id ' + mapId);
   server.runCommandSilent('scoreboard players set #nextmode nextmap_mode ' + modeId);
   server.runCommandSilent(
-    'bossbar set gun:nextmap name ["",{"text":"Destination: ","color":"gold"},{"text":"' + modeName + '","color":"' + modeColor + '"},{"text":" \u2014 ' + mapName + '","color":"white"},{"text":" \u2014 Starting in ' + Math.ceil(AUTOSTART_DELAY_MS / 1000) + 's","color":"yellow"}]'
+    'bossbar set gun:nextmap name ["",{"text":"Destination: ","color":"gold"},{"text":"' + modeName + '","color":"' + modeColor + '"},{"text":" \u2014 ' + mapName + '","color":"white"},{"text":" \u2014 Starting in ' + Math.ceil(AUTOSTART_DELAY_TICKS / 20) + 's","color":"yellow"}]'
   );
   server.runCommandSilent('bossbar set gun:nextmap color ' + bossbarColor);
   server.runCommandSilent('bossbar set gun:nextmap players @a');
@@ -193,20 +220,25 @@ function _executeStart(server) {
   }
 }
 
+// ── Hide bossbar on reload (autostartTicksLeft resets to 0, bossbar would get stuck) ──
+ServerEvents.loaded(function(event) {
+  event.server.runCommandSilent('bossbar set gun:nextmap visible false');
+});
+
 // ── Autostart tick ───────────────────────────────────────────
 ServerEvents.tick(function(event) {
-  if (autostartAt === 0) return;
+  if (autostartTicksLeft <= 0) return;
 
-  var secondsLeft = Math.ceil((autostartAt - Date.now()) / 1000);
+  autostartTicksLeft -= 1;
 
-  if (secondsLeft <= 0) {
-    autostartAt = 0;
+  if (autostartTicksLeft <= 0) {
+    autostartTicksLeft = 0;
     autostartLastSecondsLeft = -1;
     _executeStart(event.server);
     return;
   }
 
-  // Update bossbar once per second
+  var secondsLeft = Math.ceil(autostartTicksLeft / 20);
   if (secondsLeft !== autostartLastSecondsLeft) {
     autostartLastSecondsLeft = secondsLeft;
     _updateAutostartBossbar(event.server, secondsLeft);
@@ -243,7 +275,7 @@ ServerEvents.commandRegistry(function (event) {
               .executes(function (ctx) {
                 stagedMapId = map.id;
                 stagedModeId = modeId;
-                autostartAt = Date.now() + AUTOSTART_DELAY_MS;
+                autostartTicksLeft = AUTOSTART_DELAY_TICKS;
                 autostartLastSecondsLeft = -1;
                 _announceNextMap(ctx.source.server, map.id, modeId, modeName, map.name, modeColor, bossbarColor);
                 return 1;
@@ -261,7 +293,7 @@ ServerEvents.commandRegistry(function (event) {
     Commands.literal('start')
       .requires(function (src) { return src.hasPermission(2); })
       .executes(function (ctx) {
-        autostartAt = 0; // cancel any pending autostart
+        autostartTicksLeft = 0; // cancel any pending autostart
         autostartLastSecondsLeft = -1;
         _executeStart(ctx.source.server);
         return 1;
@@ -348,7 +380,7 @@ ServerEvents.commandRegistry(function (event) {
         currentMapId = 0;
         currentModeId = 0;
         matchStartTime = 0;
-        autostartAt = 0;
+        autostartTicksLeft = 0;
         autostartLastSecondsLeft = -1;
         return 1;
       })

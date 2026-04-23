@@ -100,6 +100,8 @@ ServerEvents.loaded(function(event) {
   event.server.runCommandSilent('scoreboard objectives add tdm_deaths_counted dummy');
   event.server.runCommandSilent('scoreboard objectives add gun_deaths deathCount');
   event.server.runCommandSilent('scoreboard objectives add gun_deaths_prev dummy');
+  event.server.runCommandSilent('scoreboard objectives add gun_downs dummy');
+
   event.server.runCommandSilent('scoreboard objectives add ration_roll dummy');
   event.server.runCommandSilent('scoreboard objectives add pleft_ui_timer dummy');
   event.server.runCommandSilent('scoreboard objectives add tdm_ui dummy');

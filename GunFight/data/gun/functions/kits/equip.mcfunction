@@ -5,4 +5,3 @@ execute as @a[tag=assault,gamemode=!creative,gamemode=!spectator] run function g
 execute as @a[tag=sniper,gamemode=!creative,gamemode=!spectator] run function gun:kits/single/sniper
 execute as @a[tag=ranger,gamemode=!creative,gamemode=!spectator] run function gun:kits/single/ranger
 execute as @a[tag=burst,gamemode=!creative,gamemode=!spectator] run function gun:kits/single/burst
-function shark:sharkgod

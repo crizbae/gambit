@@ -6,12 +6,15 @@ tag @a remove gun_just_died
 tag @a remove gun_spec_tp_pending
 scoreboard players set @a tdm_respawn_timer 0
 scoreboard players set @a spec_respawn_timer 0
+scoreboard players set @a gun_downs 0
+gambit_reset_downs
 execute as @a[gamemode=!creative] run scoreboard players operation @s gun_deaths_prev = @s gun_deaths
 execute as @a[gamemode=!creative] run scoreboard players operation @s tdm_deaths_counted = @s gun_deaths
 execute as @a[tag=gun_optout,gamemode=!creative] run gamemode spectator @s
 execute as @a[tag=!marksman,tag=!breacher,tag=!smg2,tag=!assault,tag=!sniper,tag=!ranger,tag=!burst,gamemode=!creative,gamemode=!spectator,tag=!gun_optout] run tag @s add assault
 function gun:kits/armor
 function gun:kits/equip
+effect give @a[gamemode=!creative,gamemode=!spectator,tag=!gun_optout] minecraft:regeneration 5 255 true
 execute as @a[gamemode=!creative,gamemode=!spectator,tag=!gun_optout] run function gun:rations/give_random_self
 execute as @a[tag=gun_optout,gamemode=spectator] run function gun:starts/spectator_tpmap
 function gun:countdown/start
