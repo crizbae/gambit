@@ -39,8 +39,8 @@ var MAPS = [
   },
   {
     id: 2,
-    name: 'Forest 2',
-    preset: 'forest2',
+    name: 'Pine Crossing',
+    preset: 'pinecrossing',
     modes: ['elimination'],
     red_spawn: '1041.66 39.00 -110.46 129.62 0.90',
     blue_spawn: '879.45 39.00 -274.27 310.52 3.75',
@@ -51,11 +51,9 @@ var MAPS = [
     name: 'Trenches',
     preset: 'trenches',
     modes: ['elimination'],
-    red_spawn: '110.49 15.00 -320.44 395.46 0.60',
-    blue_spawn: '-4.60 16.00 -177.36 227.61 -1.39',
-    elim_start_red: '13.48 27.00 -405.49 -3012.76 -5.39',
-    elim_start_blue: '152.43 27.00 -473.45 -3549.53 -5.10',
-    spectator: '52.95 26.00 -248.90 180.00 12.00'
+    red_spawn: '146.49 28.00 -554.46 -269.36 0.45',
+    blue_spawn: '18.49 28.00 -550.51 -449.46 0.75',
+    spectator: '80.30 51.16 -595.66 -361.71 28.80'
   },
   {
     id: 4,
@@ -73,14 +71,14 @@ var MAPS = [
     name: 'Mall',
     preset: 'mall',
     modes: ['tdm'],
-    red_spawn: '732.51 68.00 -734.47 -4949.67 -2.55',
-    blue_spawn: '588.58 68.00 -734.51 -4770.05 -0.30',
+    red_spawn: '732.45 58.00 -734.48 90.18 -0.00',
+    blue_spawn: '588.45 58.00 -734.49 -89.89 -0.16',
     spectator: '656.50 73.15 -720.71 -4859.61 14.40'
   },
   {
     id: 6,
-    name: 'SnowFront',
-    preset: 'snowfront',
+    name: 'CryoLab',
+    preset: 'cryolab',
     modes: ['elimination'],
     red_spawn: '584.5 57.50 -570.5 -90 0',
     blue_spawn: '802.5 57.5 -570.5 90 0',
@@ -88,17 +86,17 @@ var MAPS = [
   },
   {
     id: 7,
-    name: 'Utopia',
-    preset: 'utopia',
+    name: 'Yuritopia',
+    preset: 'yuritopia',
     modes: ['tdm'],
-    red_spawn: '120.5 46.50 -1502.5 165 0',
-    blue_spawn: '-119.5 46.50 -1502.5 200 0',
-    spectator: '0.50 60 -1535.5 180 60'
+    red_spawn: '-9.30 44.00 -1966.70 56.39 -0.77',
+    blue_spawn: '-194.50 44.00 -1929.48 -122.68 -0.75',
+    spectator: '-104.08 74.62 -1968.77 -7.54 41.81'
   },
   {
     id: 8,
-    name: 'Solstice',
-    preset: 'solstice',
+    name: 'Canopy',
+    preset: 'canopy',
     modes: ['elimination'],
     red_spawn: '345.5 47.50 -381.5 180 0',
     blue_spawn: '345.5 47.50 -519.5 360 0',
