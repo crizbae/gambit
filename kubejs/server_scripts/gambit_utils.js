@@ -174,4 +174,20 @@ ServerEvents.commandRegistry(function(event) {
           })
       )
   );
+
+  event.register(
+    Commands.literal('deathmatch')
+      .requires(function(src) { return src.hasPermission(2); })
+      .executes(function(ctx) {
+        var server = ctx.source.server;
+        // Apply glowing to all living (non-dead) active players.
+        // Glow color is inherited from the player's Minecraft team (red = red, blue = aqua).
+        server.runCommandSilent('effect give @a[tag=Red,tag=!gun_dead] minecraft:glowing 999999 0 true');
+        server.runCommandSilent('effect give @a[tag=Blue,tag=!gun_dead] minecraft:glowing 999999 0 true');
+        server.runCommandSilent(
+          'tellraw @a ["",{"text":"[Gambit] ","color":"gold","bold":true},{"text":"DEATHMATCH — all players are now visible!","color":"red","bold":true}]'
+        );
+        return 1;
+      })
+  );
 });

@@ -17,6 +17,7 @@ execute as @a[tag=Red] run clear @s
 execute as @a[tag=Blue] run clear @s
 tag @a remove Blue
 tag @a remove Red
+effect clear @a minecraft:glowing
 effect give @a regeneration 60 4 true
 effect give @a saturation 1800 0 true
 team join lobby @a[team=red]
