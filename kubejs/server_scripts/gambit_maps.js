@@ -101,6 +101,24 @@ var MAPS = [
     red_spawn: '345.5 47.50 -381.5 180 0',
     blue_spawn: '345.5 47.50 -519.5 360 0',
     spectator: '400 63 -449.5 450 25'
+  },
+  {
+    id: 9,
+    name: 'Trench Modified',
+    preset: 'trench_modified',
+    modes: ['elimination'],
+    red_spawn: '170.50 34.00 -705.50 -628.00 -0.90',
+    blue_spawn: '7.30 34.00 -701.53 -808.85 -3.15',
+    spectator: '86.38 54.49 -660.33 -538.46 33.52'
+  },
+  {
+    id: 10,
+    name: 'Neopolitan',
+    preset: 'neopolitan',
+    modes: ['tdm'],
+    red_spawn: '797.39 71.00 -11.44 71.69 3.54',
+    blue_spawn: '709.78 71.00 133.37 258.93 1.80',
+    spectator: '777.07 104.66 60.02 82.83 42.41'
   }
 ];
 
