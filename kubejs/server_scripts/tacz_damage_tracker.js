@@ -807,6 +807,9 @@ PlayerEvents.loggedIn(function(event) {
   var name = player && player.name && player.name.string ? player.name.string : null;
   if (!name) return;
 
+  // Ensure every player joins in adventure mode (OPs may have been in creative, etc.)
+  player.server.runCommandSilent('gamemode adventure ' + name);
+
   // Reset down counter on join so a disconnect/reconnect between matches starts clean.
   writeTagNumber(player.persistentData, PD_DOWNS, 0, true);
   player.server.runCommandSilent('scoreboard players set ' + name + ' gun_downs 0');
@@ -837,14 +840,44 @@ PlayerEvents.loggedOut(function(event) {
   var name = player && player.name && player.name.string ? player.name.string : null;
   if (!name) return;
 
-  // Strip all in-match tags so the player rejoins clean.
-  // Without this, Red/Blue tags persist on the offline entity and reappear on reconnect.
+  // Reset player to a clean "first join" state — no tags, no inventory, adventure mode at spawn.
   var server = player.server;
+
+  // Team tags
   server.runCommandSilent('tag ' + name + ' remove Red');
   server.runCommandSilent('tag ' + name + ' remove Blue');
+
+  // Death / respawn tags
   server.runCommandSilent('tag ' + name + ' remove gun_dead');
   server.runCommandSilent('tag ' + name + ' remove gun_just_died');
   server.runCommandSilent('tag ' + name + ' remove gun_spec_tp_pending');
+  server.runCommandSilent('tag ' + name + ' remove gun_final_down');
+  server.runCommandSilent('tag ' + name + ' remove gun_no_respawn');
+
+  // Queue opt-out
+  server.runCommandSilent('tag ' + name + ' remove gun_optout');
+
+  // Kit tags
+  server.runCommandSilent('tag ' + name + ' remove assault');
+  server.runCommandSilent('tag ' + name + ' remove breacher');
+  server.runCommandSilent('tag ' + name + ' remove burst');
+  server.runCommandSilent('tag ' + name + ' remove marksman');
+  server.runCommandSilent('tag ' + name + ' remove ranger');
+  server.runCommandSilent('tag ' + name + ' remove smg2');
+  server.runCommandSilent('tag ' + name + ' remove sniper');
+
+  // Scoreboard timers / counters
+  server.runCommandSilent('scoreboard players set ' + name + ' tdm_respawn_timer 0');
+  server.runCommandSilent('scoreboard players set ' + name + ' spec_respawn_timer 0');
+  server.runCommandSilent('scoreboard players set ' + name + ' gun_downs 0');
+
+  // Reset gamemode, inventory, effects, and spawnpoint
+  server.runCommandSilent('gamemode adventure ' + name);
+  server.runCommandSilent('clear ' + name);
+  server.runCommandSilent('effect clear ' + name);
+  server.runCommandSilent('spawnpoint ' + name + ' 0 0 0');
+
+  // Place back in lobby team
   server.runCommandSilent('team join lobby ' + name);
 
   // Clear in-memory tracking state for this player.
@@ -853,9 +886,6 @@ PlayerEvents.loggedOut(function(event) {
   delete recentlyDowned[name];
   delete downerNames[name];
   delete firstDownerNames[name];
-
-  // If this player was a pending reviver for someone else, nothing to clean up
-  // under the syringe-based system.
 });
 
 ServerEvents.tick(function(event) {

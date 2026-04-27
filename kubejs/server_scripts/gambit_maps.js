@@ -119,7 +119,17 @@ var MAPS = [
     red_spawn: '797.39 71.00 -11.44 71.69 3.54',
     blue_spawn: '709.78 71.00 133.37 258.93 1.80',
     spectator: '777.07 104.66 60.02 82.83 42.41'
+  },
+  {
+    id: 11,
+    name: 'Vivian Station',
+    preset: 'vivianstation',
+    modes: ['elimination'],
+    red_spawn: '507.45 92.00 -606.52 2698.32 5.31',
+    blue_spawn: '507.49 93.00 -764.40 2880.38 54.51',
+    spectator: '507.38 104.20 -693.67 2874.55 0.81'
   }
+  
 ];
 
 // ── Match state — JS is source of truth; scoreboard mirrors for mcfunction ──
