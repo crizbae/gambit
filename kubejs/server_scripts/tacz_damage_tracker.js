@@ -807,8 +807,13 @@ PlayerEvents.loggedIn(function(event) {
   var name = player && player.name && player.name.string ? player.name.string : null;
   if (!name) return;
 
-  // Ensure every player joins in adventure mode (OPs may have been in creative, etc.)
-  player.server.runCommandSilent('gamemode adventure ' + name);
+  // OPs are exempt from forced gamemode and spawn TP so they can work on maps freely.
+  if (!player.hasPermissions(2)) {
+    player.server.runCommandSilent('gamemode adventure ' + name);
+    // Teleport to world spawn — player position is saved on disconnect so without this
+    // they would reconnect exactly where they left off (e.g. mid-map).
+    player.server.runCommandSilent('execute in minecraft:overworld run tp ' + name + ' 0 0 0');
+  }
 
   // Reset down counter on join so a disconnect/reconnect between matches starts clean.
   writeTagNumber(player.persistentData, PD_DOWNS, 0, true);
@@ -871,8 +876,10 @@ PlayerEvents.loggedOut(function(event) {
   server.runCommandSilent('scoreboard players set ' + name + ' spec_respawn_timer 0');
   server.runCommandSilent('scoreboard players set ' + name + ' gun_downs 0');
 
-  // Reset gamemode, inventory, effects, and spawnpoint
-  server.runCommandSilent('gamemode adventure ' + name);
+  // Reset gamemode, inventory, effects, and spawnpoint (OPs keep their gamemode)
+  if (!player.hasPermissions(2)) {
+    server.runCommandSilent('gamemode adventure ' + name);
+  }
   server.runCommandSilent('clear ' + name);
   server.runCommandSilent('effect clear ' + name);
   server.runCommandSilent('spawnpoint ' + name + ' 0 0 0');
