@@ -1,9 +1,11 @@
 ﻿//  Commands:
-//    /gambitstats                         — show leaderboard (any player)
-//    /gambitstats me                      — show your stats (any player)
+//    /gambitstats                         — show combined leaderboard (any player)
+//    /gambitstats elim                    — show elimination score leaderboard (any player)
+//    /gambitstats tdm                     — show TDM score leaderboard (any player)
+//    /gambitstats me                      — show your stats + scores (any player)
 //    /gambitstats player <playerName>     — inspect one player (any player)
 //    /gambitstats top <metric>            — show top players by metric (any player)
-//      metrics: kd, winpct, damage, kills, deaths, wins, matches, mvps, dpl, assists, streak, revives
+//      metrics: score, elimscore, tdmscore, kd, winpct, damage, kills, deaths, wins, matches, mvps, dpl, assists, streak, revives
 //    /gambitstats postgame                — broadcast post-game top 5 kills, top 5 damage, and MVP (ops/functions)
 //    /gambitstats <playerName>            — inspect one player (ops only, legacy alias)
 //
@@ -14,11 +16,16 @@
 //    /gambitstats reset all               — reset all players' stats (ops only)
 //    /gambitstats reset                   — shows reset usage/help (ops only)
 //
-//    /gambitboard setup                   — spawn a text_display billboard at your feet (ops only)
-//    /gambitboard remove                  — kill the nearest billboard text_display (ops only)
-//    /gambitboard refresh                 — force-update the billboard now (ops only)
+//    /gambitboard setup <combined|elim|tdm>   — spawn a billboard for that leaderboard at your feet (ops only)
+//    /gambitboard remove [combined|elim|tdm]  — remove one or all billboards (ops only)
+//    /gambitboard refresh                     — force-update all billboards now (ops only)
 //
-//    gambit_log_match <red|blue|tie>      — log match result (called from win mcfunctions)
+//    gambit_log_match <red|blue|tie>      — log match result + calculate scores (called from win mcfunctions)
+//
+// Score formulas:
+//    Elimination: (0.5 * damage) + (100 * kills) + (50 * assists) + (300 if MVP)
+//    TDM:         (0.25 * damage) + (100 * kills) + (50 * assists) - (100 * deaths) + (500 if MVP)
+//    Leaderboard ranks by average score per match (mode-specific and combined).
 // ============================================================
 
 var StringArgumentType = Java.loadClass('com.mojang.brigadier.arguments.StringArgumentType');
@@ -33,12 +40,17 @@ var PD_DOWNS = 'gambit_downs';
 var PD_ASSISTS = 'gambit_stats_assists';
 var PD_LONGEST_STREAK = 'gambit_stats_longest_streak';
 var PD_REVIVES = 'gambit_stats_revives';
+var PD_ELIM_SCORE   = 'gambit_stats_elim_score';
+var PD_ELIM_MATCHES = 'gambit_stats_elim_matches';
+var PD_TDM_SCORE    = 'gambit_stats_tdm_score';
+var PD_TDM_MATCHES  = 'gambit_stats_tdm_matches';
+var LEADERBOARD_MIN_MATCHES_MODE = 3;
 var DOWNS_CONFIG_FILE = 'kubejs/data/gambit_downs_config.json';
 var LAST_TACZ_ATTACK_TTL_MS = 15000;
 var ATTACKER_CACHE_CLEANUP_INTERVAL_TICKS = 200;
 var STATS_FLUSH_INTERVAL_TICKS = 200;
 var STATS_FILE_PATH = 'kubejs/data/gambit_stats.json';
-var BILLBOARD_TAG = 'gambit_billboard';
+var BILLBOARD_TAGS = { combined: 'gambit_billboard_combined', elim: 'gambit_billboard_elim', tdm: 'gambit_billboard_tdm' };
 var BILLBOARD_UPDATE_INTERVAL_TICKS = 100;
 var BILLBOARD_POS_FILE = 'kubejs/data/gambit_billboard_pos.json';
 var LEADERBOARD_MIN_MATCHES = 10;
@@ -58,7 +70,7 @@ var attackerCacheCleanupTicker = 0;
 var statsSaveTicker = 0;
 var statsDirty = false;
 var billboardUpdateTicker = 0;
-var billboardPos = null; // {x, y, z} — persisted spawn position of the billboard entity
+var billboardPositions = { combined: null, elim: null, tdm: null }; // {x,y,z} per mode
 
 // ── Down limit config ────────────────────────────────────────
 // max_downs: how many times a player can be downed before the next hit kills instantly.
@@ -91,7 +103,8 @@ loadBillboardPos();
 loadDownsConfig();
 
 function makeDefaultEntry() {
-  return { damage: 0.0, kills: 0, deaths: 0, matches: 0, wins: 0, mvps: 0, assists: 0, longest_streak: 0, revives: 0 };
+  return { damage: 0.0, kills: 0, deaths: 0, matches: 0, wins: 0, mvps: 0, assists: 0, longest_streak: 0, revives: 0,
+           elim_score_total: 0.0, elim_matches: 0, tdm_score_total: 0.0, tdm_matches: 0 };
 }
 
 function normalizeEntry(raw) {
@@ -118,6 +131,15 @@ function normalizeEntry(raw) {
   if (Number.isNaN(base.longest_streak)) base.longest_streak = 0;
   if (Number.isNaN(base.revives)) base.revives = 0;
 
+  base.elim_score_total = Number(raw.elim_score_total || 0.0);
+  base.elim_matches     = Math.floor(Number(raw.elim_matches || 0));
+  base.tdm_score_total  = Number(raw.tdm_score_total || 0.0);
+  base.tdm_matches      = Math.floor(Number(raw.tdm_matches || 0));
+  if (Number.isNaN(base.elim_score_total)) base.elim_score_total = 0.0;
+  if (Number.isNaN(base.elim_matches))     base.elim_matches = 0;
+  if (Number.isNaN(base.tdm_score_total))  base.tdm_score_total = 0.0;
+  if (Number.isNaN(base.tdm_matches))      base.tdm_matches = 0;
+
   return base;
 }
 
@@ -129,26 +151,57 @@ function markStatsDirty() {
 function loadBillboardPos() {
   try {
     var pos = JsonIO.read(BILLBOARD_POS_FILE);
-    if (pos && typeof pos.x === 'number' && typeof pos.y === 'number' && typeof pos.z === 'number') {
-      billboardPos = {x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z)};
+    if (!pos) return;
+    var modes = ['combined', 'elim', 'tdm'];
+    for (var mi = 0; mi < modes.length; mi++) {
+      var m = modes[mi];
+      if (pos[m] && typeof pos[m].x === 'number') {
+        billboardPositions[m] = { x: Math.floor(pos[m].x), y: Math.floor(pos[m].y), z: Math.floor(pos[m].z) };
+      }
+    }
+    // Backward compat: old format was {x,y,z} at top level — treat as combined
+    if (billboardPositions.combined === null && typeof pos.x === 'number') {
+      billboardPositions.combined = { x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z) };
     }
   } catch (e) {}
 }
 
-function saveBillboardPos(x, y, z) {
-  billboardPos = {x: x, y: y, z: z};
-  try { JsonIO.write(BILLBOARD_POS_FILE, billboardPos); } catch (e) {}
+function saveBillboardPositions() {
+  try {
+    var toSave = {};
+    var modes = ['combined', 'elim', 'tdm'];
+    for (var i = 0; i < modes.length; i++) {
+      if (billboardPositions[modes[i]] !== null) {
+        toSave[modes[i]] = billboardPositions[modes[i]];
+      }
+    }
+    JsonIO.write(BILLBOARD_POS_FILE, toSave);
+  } catch (e) {}
 }
 
-function buildBillboardText() {
-  var sorted = getSortedEntries();
+function buildBillboardText(mode) {
+  var sorted, title, getScore;
+  if (mode === 'elim') {
+    sorted = getSortedEntriesByElimScore();
+    title = '\u2550\u2550 Elim Leaderboard \u2550\u2550';
+    getScore = function(e) { return getElimAvgScore(e).toFixed(0); };
+  } else if (mode === 'tdm') {
+    sorted = getSortedEntriesByTdmScore();
+    title = '\u2550\u2550 TDM Leaderboard \u2550\u2550';
+    getScore = function(e) { return getTdmAvgScore(e).toFixed(0); };
+  } else {
+    sorted = getSortedEntries();
+    title = '\u2550\u2550 Gambit Leaderboard \u2550\u2550';
+    getScore = function(e) { return getCombinedAvgScore(e).toFixed(0); };
+  }
+
   var limit = Math.min(10, sorted.length);
   // nl: JS '\\\\n' → command \\n → SNBT parser outputs \n → JSON parser → newline
   var nl = '\\\\n';
-  var sep = ' \u2502 '; // │ — column divider between KD and D/L
+  var sep = ' \u2502 '; // │ — column divider
 
   var components = [];
-  components.push('{"text":"\u2550\u2550 Gambit Leaderboard \u2550\u2550' + nl + '","color":"aqua","bold":true}');
+  components.push('{"text":"' + title + nl + '","color":"aqua","bold":true}');
 
   if (limit === 0) {
     components.push('{"text":"No stats yet","color":"gray"}');
@@ -161,7 +214,7 @@ function buildBillboardText() {
       else if (i === 1) { prefix = '\u2605 '; color = 'gold'; }
       else if (i === 2) { prefix = '\u2605 '; color = 'yellow'; }
       else              { prefix = (i + 1) + '. '; color = 'white'; }
-      var line = prefix + name + '  KD:' + getKD(e).toFixed(2) + sep + 'D/L:' + getAvgDamagePerLife(e).toFixed(1);
+      var line = prefix + name + '  Score:' + getScore(e) + sep + 'KD:' + getKD(e).toFixed(2);
       var suffix = i < limit - 1 ? nl : '';
       components.push('{"text":"' + line + suffix + '","color":"' + color + '"}');
     }
@@ -175,11 +228,16 @@ function buildBillboardText() {
 
 function updateBillboard(server) {
   if (!server) return;
-  var textJson = buildBillboardText();
-  // Wrap in 'execute in overworld' so @e has a world context on Forge 1.20.1.
-  server.runCommandSilent(
-    'execute in minecraft:overworld run data modify entity @e[type=minecraft:text_display,tag=' + BILLBOARD_TAG + ',limit=1] text set value \'' + textJson + '\''
-  );
+  var modes = ['combined', 'elim', 'tdm'];
+  for (var mi = 0; mi < modes.length; mi++) {
+    var m = modes[mi];
+    if (!billboardPositions[m]) continue;
+    var tag = BILLBOARD_TAGS[m];
+    var textJson = buildBillboardText(m);
+    server.runCommandSilent(
+      'execute in minecraft:overworld run data modify entity @e[type=minecraft:text_display,tag=' + tag + ',limit=1] text set value \'' + textJson + '\''
+    );
+  }
 }
 
 function loadStatsFromDisk() {
@@ -347,7 +405,7 @@ function getEntry(playerName) {
 
 function getRoundEntry(playerName) {
   if (!roundStats[playerName]) {
-    roundStats[playerName] = { damage: 0.0, kills: 0, deaths: 0 };
+    roundStats[playerName] = { damage: 0.0, kills: 0, deaths: 0, assists: 0 };
   }
   return roundStats[playerName];
 }
@@ -414,6 +472,10 @@ function loadEntryFromPlayer(player) {
   entry.assists = Math.floor(readTagNumber(tag, PD_ASSISTS, 0));
   entry.longest_streak = Math.floor(readTagNumber(tag, PD_LONGEST_STREAK, 0));
   entry.revives = Math.floor(readTagNumber(tag, PD_REVIVES, 0));
+  entry.elim_score_total = readTagNumber(tag, PD_ELIM_SCORE, 0.0);
+  entry.elim_matches     = Math.floor(readTagNumber(tag, PD_ELIM_MATCHES, 0));
+  entry.tdm_score_total  = readTagNumber(tag, PD_TDM_SCORE, 0.0);
+  entry.tdm_matches      = Math.floor(readTagNumber(tag, PD_TDM_MATCHES, 0));
 }
 
 function saveEntryToPlayer(player) {
@@ -432,6 +494,10 @@ function saveEntryToPlayer(player) {
   writeTagNumber(tag, PD_ASSISTS, entry.assists || 0, true);
   writeTagNumber(tag, PD_LONGEST_STREAK, entry.longest_streak || 0, true);
   writeTagNumber(tag, PD_REVIVES, entry.revives || 0, true);
+  writeTagNumber(tag, PD_ELIM_SCORE,   entry.elim_score_total || 0.0, false);
+  writeTagNumber(tag, PD_ELIM_MATCHES, entry.elim_matches     || 0, true);
+  writeTagNumber(tag, PD_TDM_SCORE,    entry.tdm_score_total  || 0.0, false);
+  writeTagNumber(tag, PD_TDM_MATCHES,  entry.tdm_matches      || 0, true);
   markStatsDirty();
 }
 
@@ -477,6 +543,34 @@ function getCompositeScore(e) {
   var killsPerMatch = e.kills / Math.max(1, e.matches); // normalised kill rate
   var mvpsPerMatch = (e.mvps || 0) / Math.max(1, e.matches); // normalised MVP rate
   return (kd * 0.4) + (winRate * 0.3) + (killsPerMatch * 0.2) + (mvpsPerMatch * 0.1);
+}
+
+// Mode-specific average score per match (for the 3-leaderboard system).
+// Formula for Elim: 0.5*damage + 100*kills + 50*assists + 300 if MVP (avg across elim matches)
+// Formula for TDM:  0.25*damage + 100*kills + 50*assists - 100*deaths + 500 if MVP (avg across tdm matches)
+function getElimAvgScore(e) {
+  if (!e || (e.elim_matches || 0) === 0) return 0;
+  return e.elim_score_total / e.elim_matches;
+}
+
+function getTdmAvgScore(e) {
+  if (!e || (e.tdm_matches || 0) === 0) return 0;
+  return e.tdm_score_total / e.tdm_matches;
+}
+
+function getCombinedAvgScore(e) {
+  if (!e) return 0;
+  var totalMatches = (e.elim_matches || 0) + (e.tdm_matches || 0);
+  if (totalMatches === 0) return 0;
+  return ((e.elim_score_total || 0) + (e.tdm_score_total || 0)) / totalMatches;
+}
+
+function calcElimMatchScore(rs, isMvp) {
+  return (0.5 * (rs.damage || 0)) + (100 * (rs.kills || 0)) + (50 * (rs.assists || 0)) + (isMvp ? 300 : 0);
+}
+
+function calcTdmMatchScore(rs, isMvp) {
+  return (0.25 * (rs.damage || 0)) + (100 * (rs.kills || 0)) + (50 * (rs.assists || 0)) - (100 * (rs.deaths || 0)) + (isMvp ? 500 : 0);
 }
 
 function getOnlinePlayerByName(server, playerName) {
@@ -549,11 +643,13 @@ function applyMatchResult(server, targetArg, addMatch, addWin) {
 }
 
 function formatEntry(name, e) {
-  return '§e' + name + '§r — §bKD: §f' + getKD(e).toFixed(2)
-    + '§r | §cD/L: §f' + getAvgDamagePerLife(e).toFixed(1);
+  return '§e' + name + '§r — §aScore: §f' + getCombinedAvgScore(e).toFixed(0) + '§r | §bKD: §f' + getKD(e).toFixed(2);
 }
 
 function metricLabel(metric) {
+  if (metric === 'score')     return 'Combined Score/Match';
+  if (metric === 'elimscore') return 'Elim Score/Match';
+  if (metric === 'tdmscore')  return 'TDM Score/Match';
   if (metric === 'kd') return 'KD';
   if (metric === 'winpct') return 'Win %';
   if (metric === 'damage') return 'Damage';
@@ -571,6 +667,9 @@ function metricLabel(metric) {
 
 function metricValue(e, metric) {
   if (!e) return 0;
+  if (metric === 'score')     return getCombinedAvgScore(e);
+  if (metric === 'elimscore') return getElimAvgScore(e);
+  if (metric === 'tdmscore')  return getTdmAvgScore(e);
   if (metric === 'kd') return getKD(e);
   if (metric === 'winpct') return getWinPct(e);
   if (metric === 'damage') return e.damage;
@@ -587,6 +686,7 @@ function metricValue(e, metric) {
 }
 
 function formatMetricValue(value, metric) {
+  if (metric === 'score' || metric === 'elimscore' || metric === 'tdmscore') return Number(value).toFixed(0);
   if (metric === 'kd') return Number(value).toFixed(2);
   if (metric === 'winpct') return Number(value).toFixed(1) + '%';
   if (metric === 'damage') return Number(value).toFixed(1);
@@ -755,17 +855,45 @@ function getSortedEntries() {
   var keys = Object.keys(stats);
   var arr = [];
   for (var i = 0; i < keys.length; i++) {
-    if ((stats[keys[i]].matches || 0) >= LEADERBOARD_MIN_MATCHES) {
-      arr.push([keys[i], stats[keys[i]]]);
+    var _e = stats[keys[i]];
+    var _modeMatches = (_e.elim_matches || 0) + (_e.tdm_matches || 0);
+    if (_modeMatches >= LEADERBOARD_MIN_MATCHES_MODE) {
+      arr.push([keys[i], _e]);
     }
   }
   arr.sort(function(a, b) {
-    var scoreDiff = getCompositeScore(b[1]) - getCompositeScore(a[1]);
+    var scoreDiff = getCombinedAvgScore(b[1]) - getCombinedAvgScore(a[1]);
     if (scoreDiff !== 0) return scoreDiff;
     var kdDiff = getKD(b[1]) - getKD(a[1]);
     if (kdDiff !== 0) return kdDiff;
     return getAvgDamagePerLife(b[1]) - getAvgDamagePerLife(a[1]);
   });
+  return arr;
+}
+
+function getSortedEntriesByElimScore() {
+  var keys = Object.keys(stats);
+  var arr = [];
+  for (var i = 0; i < keys.length; i++) {
+    var _e = stats[keys[i]];
+    if ((_e.elim_matches || 0) >= LEADERBOARD_MIN_MATCHES_MODE) {
+      arr.push([keys[i], _e]);
+    }
+  }
+  arr.sort(function(a, b) { return getElimAvgScore(b[1]) - getElimAvgScore(a[1]); });
+  return arr;
+}
+
+function getSortedEntriesByTdmScore() {
+  var keys = Object.keys(stats);
+  var arr = [];
+  for (var i = 0; i < keys.length; i++) {
+    var _e = stats[keys[i]];
+    if ((_e.tdm_matches || 0) >= LEADERBOARD_MIN_MATCHES_MODE) {
+      arr.push([keys[i], _e]);
+    }
+  }
+  arr.sort(function(a, b) { return getTdmAvgScore(b[1]) - getTdmAvgScore(a[1]); });
   return arr;
 }
 
@@ -856,8 +984,6 @@ PlayerEvents.loggedOut(function(event) {
   server.runCommandSilent('tag ' + name + ' remove gun_dead');
   server.runCommandSilent('tag ' + name + ' remove gun_just_died');
   server.runCommandSilent('tag ' + name + ' remove gun_spec_tp_pending');
-  server.runCommandSilent('tag ' + name + ' remove gun_final_down');
-  server.runCommandSilent('tag ' + name + ' remove gun_no_respawn');
 
   // Queue opt-out
   server.runCommandSilent('tag ' + name + ' remove gun_optout');
@@ -868,7 +994,7 @@ PlayerEvents.loggedOut(function(event) {
   server.runCommandSilent('tag ' + name + ' remove burst');
   server.runCommandSilent('tag ' + name + ' remove marksman');
   server.runCommandSilent('tag ' + name + ' remove ranger');
-  server.runCommandSilent('tag ' + name + ' remove smg2');
+  server.runCommandSilent('tag ' + name + ' remove flanker');
   server.runCommandSilent('tag ' + name + ' remove sniper');
 
   // Scoreboard timers / counters
@@ -1220,6 +1346,8 @@ EntityEvents.death(function(event) {
     if (_assistorPlayer) loadEntryFromPlayer(_assistorPlayer);
     var _assistorEntry = getEntry(_assistorName);
     _assistorEntry.assists = (_assistorEntry.assists || 0) + 1;
+    var _assistorRoundEntry = getRoundEntry(_assistorName);
+    _assistorRoundEntry.assists = (_assistorRoundEntry.assists || 0) + 1;
     markStatsDirty();
     if (_assistorPlayer) {
       saveEntryToPlayer(_assistorPlayer);
@@ -1235,23 +1363,20 @@ ServerEvents.commandRegistry(function(event) {
   event.register(
     Commands.literal('gambitstats')
 
-      // /gambitstats — leaderboard
+      // /gambitstats — show combined leaderboard
       .executes(function(ctx) {
         var player = ctx.source.player;
         if (!player || !player.tell) return 1;
 
-        if (statsSize() === 0) {
-          player.tell('§7[Gambit Stats] No stats recorded yet for this round.');
-          return 1;
-        }
-
         var sorted = getSortedEntries();
         var limit = Math.min(10, sorted.length);
-        player.tell('§6§l── Gambit Leaderboard ──');
+        player.tell('§6§l── Gambit Combined Leaderboard ──');
+        player.tell('§7Score = avg points per match across all modes (min ' + LEADERBOARD_MIN_MATCHES_MODE + ' matches)');
         for (var i = 0; i < limit; i++) {
           player.tell('§7' + (i + 1) + '. ' + formatEntry(sorted[i][0], sorted[i][1]));
         }
-        player.tell('§6§l──────────────────────');
+        if (limit === 0) player.tell('§7No players have played ' + LEADERBOARD_MIN_MATCHES_MODE + '+ matches yet.');
+        player.tell('§6§l───────────────────────────────');
         return 1;
       })
 
@@ -1281,6 +1406,10 @@ ServerEvents.commandRegistry(function(event) {
             player.tell('  §aWins: §f' + e.wins);
             player.tell('  §dWin %: §f' + getWinPct(e).toFixed(1) + '%');
             player.tell('  §6MVPs: §f' + (e.mvps || 0));
+            player.tell('§8§m----------------------------');
+            player.tell('  §2Elim Score/Match: §f' + getElimAvgScore(e).toFixed(0) + ' §8(' + (e.elim_matches || 0) + ' matches)');
+            player.tell('  §2TDM Score/Match:  §f' + getTdmAvgScore(e).toFixed(0)  + ' §8(' + (e.tdm_matches  || 0) + ' matches)');
+            player.tell('  §aCombined Score/Match: §f' + getCombinedAvgScore(e).toFixed(0) + ' §8(' + ((e.elim_matches || 0) + (e.tdm_matches || 0)) + ' total)');
             player.tell('§6§l──────────────────────');
             return 1;
           })
@@ -1298,7 +1427,7 @@ ServerEvents.commandRegistry(function(event) {
                 var metric = String(StringArgumentType.getString(ctx, 'metric')).toLowerCase();
                 var label = metricLabel(metric);
                 if (!label) {
-                  player.tell('§e[Gambit Stats] Unknown metric "' + metric + '". Use: kd, winpct, damage, kills, deaths, wins, matches, mvps, dpl, assists, streak, revives.');
+                  player.tell('§e[Gambit Stats] Unknown metric "' + metric + '". Use: score, elimscore, tdmscore, kd, winpct, damage, kills, deaths, wins, matches, mvps, dpl, assists, streak, revives.');
                   return 1;
                 }
 
@@ -1389,6 +1518,82 @@ ServerEvents.commandRegistry(function(event) {
           )
       )
 
+      // /gambitstats elim
+      .then(
+        Commands.literal('elim')
+          .executes(function(ctx) {
+            var player = ctx.source.player;
+            if (!player || !player.tell) return 1;
+
+            var sorted = getSortedEntriesByElimScore();
+            var limit = Math.min(10, sorted.length);
+            player.tell('§6§l── Gambit Elimination Leaderboard ──');
+            player.tell('§7Score = (0.5×dmg) + (100×kills) + (50×assists) + (300 MVP) ÷ matches');
+            for (var i = 0; i < limit; i++) {
+              var _e = sorted[i][1];
+              player.tell('§7' + (i + 1) + '. §e' + sorted[i][0] + '§r — §2Score: §f' + getElimAvgScore(_e).toFixed(0) + ' §8(' + (_e.elim_matches || 0) + ' matches)');
+            }
+            if (limit === 0) player.tell('§7No players have played ' + LEADERBOARD_MIN_MATCHES_MODE + '+ elimination matches yet.');
+            player.tell('§6§l────────────────────────────────');
+            return 1;
+          })
+      )
+
+      // /gambitstats tdm
+      .then(
+        Commands.literal('tdm')
+          .executes(function(ctx) {
+            var player = ctx.source.player;
+            if (!player || !player.tell) return 1;
+
+            var sorted = getSortedEntriesByTdmScore();
+            var limit = Math.min(10, sorted.length);
+            player.tell('§6§l── Gambit TDM Leaderboard ──');
+            player.tell('§7Score = (0.25×dmg) + (100×kills) + (50×assists) - (100×deaths) + (500 MVP) ÷ matches');
+            for (var i = 0; i < limit; i++) {
+              var _e = sorted[i][1];
+              player.tell('§7' + (i + 1) + '. §e' + sorted[i][0] + '§r — §2Score: §f' + getTdmAvgScore(_e).toFixed(0) + ' §8(' + (_e.tdm_matches || 0) + ' matches)');
+            }
+            if (limit === 0) player.tell('§7No players have played ' + LEADERBOARD_MIN_MATCHES_MODE + '+ TDM matches yet.');
+            player.tell('§6§l───────────────────────');
+            return 1;
+          })
+      )
+
+      // /gambitstats combined
+      .then(
+        Commands.literal('combined')
+          .executes(function(ctx) {
+            var player = ctx.source.player;
+            if (!player || !player.tell) return 1;
+
+            var keys = Object.keys(stats);
+            var arr = [];
+            for (var i = 0; i < keys.length; i++) {
+              var e = stats[keys[i]];
+              var totalModeMatches = (e.elim_matches || 0) + (e.tdm_matches || 0);
+              if (totalModeMatches >= LEADERBOARD_MIN_MATCHES_MODE) {
+                arr.push([keys[i], e]);
+              }
+            }
+            arr.sort(function(a, b) { return getCombinedAvgScore(b[1]) - getCombinedAvgScore(a[1]); });
+            var limit = Math.min(10, arr.length);
+
+            player.tell('§6§l── Combined Leaderboard ──');
+            if (limit === 0) {
+              player.tell('§7No players with ' + LEADERBOARD_MIN_MATCHES_MODE + '+ scored matches yet.');
+            } else {
+              for (var i = 0; i < limit; i++) {
+                var e = arr[i][1];
+                var totalM = (e.elim_matches || 0) + (e.tdm_matches || 0);
+                player.tell('§7' + (i + 1) + '. §e' + arr[i][0] + '§r — §6Avg Score/Match: §f' + getCombinedAvgScore(e).toFixed(1) + ' §7(' + totalM + ' matches)');
+              }
+            }
+            player.tell('§6§l──────────────────────────');
+            return 1;
+          })
+      )
+
       // /gambitstats player <playerName>
       .then(
         Commands.literal('player')
@@ -1428,6 +1633,10 @@ ServerEvents.commandRegistry(function(event) {
                 viewer.tell('  §aWins: §f' + e.wins);
                 viewer.tell('  §dWin %: §f' + getWinPct(e).toFixed(1) + '%');
                 viewer.tell('  §6MVPs: §f' + (e.mvps || 0));
+                viewer.tell('§8§m----------------------------');
+                viewer.tell('  §2Elim Score/Match: §f' + getElimAvgScore(e).toFixed(0) + ' §8(' + (e.elim_matches || 0) + ' matches)');
+                viewer.tell('  §2TDM Score/Match:  §f' + getTdmAvgScore(e).toFixed(0)  + ' §8(' + (e.tdm_matches  || 0) + ' matches)');
+                viewer.tell('  §aCombined Score/Match: §f' + getCombinedAvgScore(e).toFixed(0) + ' §8(' + ((e.elim_matches || 0) + (e.tdm_matches || 0)) + ' total)');
                 viewer.tell('§6§l──────────────────────');
                 return 1;
               })
@@ -1549,6 +1758,10 @@ ServerEvents.commandRegistry(function(event) {
             player.tell('  §aWins: §f' + e.wins);
             player.tell('  §dWin %: §f' + getWinPct(e).toFixed(1) + '%');
             player.tell('  §6MVPs: §f' + (e.mvps || 0));
+            player.tell('§8§m----------------------------');
+            player.tell('  §2Elim Score/Match: §f' + getElimAvgScore(e).toFixed(0) + ' §8(' + (e.elim_matches || 0) + ' matches)');
+            player.tell('  §2TDM Score/Match:  §f' + getTdmAvgScore(e).toFixed(0)  + ' §8(' + (e.tdm_matches  || 0) + ' matches)');
+            player.tell('  §aCombined Score/Match: §f' + getCombinedAvgScore(e).toFixed(0) + ' §8(' + ((e.elim_matches || 0) + (e.tdm_matches || 0)) + ' total)');
             player.tell('§6§l──────────────────────');
             return 1;
           })
@@ -1572,6 +1785,13 @@ ServerEvents.commandRegistry(function(event) {
 
             if (winner !== 'red' && winner !== 'blue' && winner !== 'tie') return 0;
 
+            var modeId = typeof currentModeId !== 'undefined' ? currentModeId : 0;
+            var isTdm = modeId === 1;
+
+            // Determine MVP name before we build player details (needs roundStats).
+            var mvpResult = getRoundMvp();
+            var mvpName = mvpResult ? mvpResult.name : null;
+
             // Build player details for match logging
             var playerDetails = [];
             if (server && server.players) {
@@ -1581,14 +1801,29 @@ ServerEvents.commandRegistry(function(event) {
                 if (!isRed && !isBlue) return;
                 var name = p.name && p.name.string ? p.name.string : null;
                 if (!name) return;
-                var rs = roundStats[name] || { damage: 0, kills: 0, deaths: 0 };
+                var rs = roundStats[name] || { damage: 0, kills: 0, deaths: 0, assists: 0 };
+                var isMvp = (name === mvpName);
+                var matchScore = isTdm ? calcTdmMatchScore(rs, isMvp) : calcElimMatchScore(rs, isMvp);
                 playerDetails.push({
                   name: name,
                   team: isRed ? 'red' : 'blue',
                   kills: rs.kills || 0,
                   deaths: rs.deaths || 0,
-                  damage: rs.damage || 0
+                  damage: rs.damage || 0,
+                  assists: rs.assists || 0,
+                  match_score: matchScore
                 });
+                // Accumulate per-mode score into lifetime stats.
+                loadEntryFromPlayer(p);
+                var e = getEntry(name);
+                if (isTdm) {
+                  e.tdm_score_total = (e.tdm_score_total || 0) + matchScore;
+                  e.tdm_matches     = (e.tdm_matches || 0) + 1;
+                } else {
+                  e.elim_score_total = (e.elim_score_total || 0) + matchScore;
+                  e.elim_matches     = (e.elim_matches || 0) + 1;
+                }
+                saveEntryToPlayer(p);
               });
             }
 
@@ -1596,7 +1831,7 @@ ServerEvents.commandRegistry(function(event) {
             if (typeof gambitDbIsEnabled === 'function' && gambitDbIsEnabled()) {
               // Resolve map info from JS globals set by gambit_maps.js
               var mapId = typeof currentMapId !== 'undefined' ? currentMapId : 0;
-              var modeId = typeof currentModeId !== 'undefined' ? currentModeId : 0;
+              // modeId already declared above
               var mapName = 'Unknown';
 
               if (mapId > 0 && typeof getMapById === 'function') {
@@ -1629,64 +1864,116 @@ ServerEvents.commandRegistry(function(event) {
   );
 });
 
+// ── /gambitkit command ────────────────────────────────────────
+// Usable by all players (no permission requirement).
+// Runs the kit selector mcfunction as the calling player, identical
+// to stepping on the coloured glass block.
+ServerEvents.commandRegistry(function(event) {
+  var Commands = event.commands;
+
+  var VALID_KITS = ['assault', 'breacher', 'burst', 'flanker', 'marksman', 'ranger', 'sniper'];
+
+  event.register(
+    Commands.literal('gambitkit')
+      .then(
+        Commands.argument('kit', StringArgumentType.word())
+          .executes(function(ctx) {
+            var player = ctx.source.player;
+            if (!player) return 0;
+
+            var kit = String(StringArgumentType.getString(ctx, 'kit')).toLowerCase();
+            if (VALID_KITS.indexOf(kit) === -1) {
+              player.tell('§c[Gambit] Unknown kit "' + kit + '". Valid kits: ' + VALID_KITS.join(', '));
+              return 0;
+            }
+
+            var name = player.name.string;
+            ctx.source.server.runCommandSilent(
+              'execute as ' + name + ' at ' + name + ' run function gun:selectors/' + kit
+            );
+            return 1;
+          })
+      )
+  );
+});
+
 // ── /gambitboard command ──────────────────────────────────────
 ServerEvents.commandRegistry(function(event) {
   var Commands = event.commands;
+
+  function setupBillboard(ctx, mode) {
+    var player = ctx.source.player;
+    if (!player || !player.tell) return 1;
+    var playerName = player.name && player.name.string ? player.name.string : null;
+    if (!playerName) return 1;
+    var x = Math.floor(player.x);
+    var y = Math.floor(player.y) + 1;
+    var z = Math.floor(player.z);
+    var tag = BILLBOARD_TAGS[mode];
+    // Kill any existing billboard of this mode first.
+    ctx.source.server.runCommandSilent('execute in minecraft:overworld run kill @e[type=minecraft:text_display,tag=' + tag + ']');
+    billboardPositions[mode] = { x: x, y: y, z: z };
+    saveBillboardPositions();
+    var textJson = buildBillboardText(mode);
+    var nbt = '{Tags:["' + tag + '"],billboard:"fixed",background:0,line_width:300,text:\'' + textJson + '\'}';
+    // Use 'in minecraft:overworld' explicitly — don't inherit player's current dimension.
+    ctx.source.server.runCommandSilent(
+      'execute as ' + playerName + ' in minecraft:overworld run summon minecraft:text_display ' + x + ' ' + y + ' ' + z + ' ' + nbt
+    );
+    player.tell('§a[Gambit Board] ' + mode.charAt(0).toUpperCase() + mode.slice(1) + ' billboard placed at ' + x + ' ' + y + ' ' + z + '.');
+    return 1;
+  }
+
+  function removeBillboard(ctx, mode) {
+    var player = ctx.source.player;
+    if (!player || !player.tell) return 1;
+    var tag = BILLBOARD_TAGS[mode];
+    billboardPositions[mode] = null;
+    saveBillboardPositions();
+    ctx.source.server.runCommandSilent('execute in minecraft:overworld run kill @e[type=minecraft:text_display,tag=' + tag + ']');
+    player.tell('§a[Gambit Board] ' + mode.charAt(0).toUpperCase() + mode.slice(1) + ' billboard removed.');
+    return 1;
+  }
 
   event.register(
     Commands.literal('gambitboard')
       .requires(function(src) { return src.hasPermission(2); })
 
-      // /gambitboard setup — store player position and spawn the billboard there
+      // /gambitboard setup <combined|elim|tdm>
       .then(
         Commands.literal('setup')
-          .executes(function(ctx) {
-            var player = ctx.source.player;
-            if (!player || !player.tell) return 1;
-            var playerName = player.name && player.name.string ? player.name.string : null;
-            if (!playerName) return 1;
-            var x = Math.floor(player.x);
-            var y = Math.floor(player.y) + 1;
-            var z = Math.floor(player.z);
-            saveBillboardPos(x, y, z);
-            // Kill any previous billboard first.
-            ctx.source.server.runCommandSilent('execute in minecraft:overworld run kill @e[type=minecraft:text_display,tag=' + BILLBOARD_TAG + ']');
-            var textJson = buildBillboardText();
-            var nbt = '{Tags:["' + BILLBOARD_TAG + '"],billboard:"fixed",background:0,line_width:300,text:\'' + textJson + '\'}';
-            // Use 'in minecraft:overworld' explicitly — don't inherit player's current
-            // dimension via 'at @s', which would place the entity in the wrong world
-            // if the player is not in the overworld.
-            ctx.source.server.runCommandSilent(
-              'execute as ' + playerName + ' in minecraft:overworld run summon minecraft:text_display ' + x + ' ' + y + ' ' + z + ' ' + nbt
-            );
-            player.tell('§a[Gambit Board] Billboard placed at ' + x + ' ' + y + ' ' + z + '.');
-            return 1;
-          })
+          .then(Commands.literal('combined').executes(function(ctx) { return setupBillboard(ctx, 'combined'); }))
+          .then(Commands.literal('elim').executes(function(ctx) { return setupBillboard(ctx, 'elim'); }))
+          .then(Commands.literal('tdm').executes(function(ctx) { return setupBillboard(ctx, 'tdm'); }))
       )
 
-      // /gambitboard remove — clear stored position and kill all billboard entities
+      // /gambitboard remove [combined|elim|tdm]
       .then(
         Commands.literal('remove')
           .executes(function(ctx) {
             var player = ctx.source.player;
             if (!player || !player.tell) return 1;
-            billboardPos = null;
-            try { JsonIO.write(BILLBOARD_POS_FILE, {}); } catch (e) {}
-            ctx.source.server.runCommandSilent(
-              'execute in minecraft:overworld run kill @e[type=minecraft:text_display,tag=' + BILLBOARD_TAG + ']'
-            );
-            player.tell('§a[Gambit Board] Billboard removed.');
+            var modes = ['combined', 'elim', 'tdm'];
+            for (var mi = 0; mi < modes.length; mi++) {
+              billboardPositions[modes[mi]] = null;
+              ctx.source.server.runCommandSilent('execute in minecraft:overworld run kill @e[type=minecraft:text_display,tag=' + BILLBOARD_TAGS[modes[mi]] + ']');
+            }
+            saveBillboardPositions();
+            player.tell('§a[Gambit Board] All billboards removed.');
             return 1;
           })
+          .then(Commands.literal('combined').executes(function(ctx) { return removeBillboard(ctx, 'combined'); }))
+          .then(Commands.literal('elim').executes(function(ctx) { return removeBillboard(ctx, 'elim'); }))
+          .then(Commands.literal('tdm').executes(function(ctx) { return removeBillboard(ctx, 'tdm'); }))
       )
 
-      // /gambitboard refresh — force update now
+      // /gambitboard refresh — force update all billboards now
       .then(
         Commands.literal('refresh')
           .executes(function(ctx) {
             var player = ctx.source.player;
             updateBillboard(ctx.source.server);
-            if (player && player.tell) player.tell('§a[Gambit Board] Billboard updated.');
+            if (player && player.tell) player.tell('§a[Gambit Board] All billboards updated.');
             return 1;
           })
       )

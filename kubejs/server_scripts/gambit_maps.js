@@ -59,11 +59,9 @@ var MAPS = [
     id: 4,
     name: 'Training Grounds',
     preset: 'training_grounds',
-    modes: ['elimination', 'tdm'],
+    modes: ['tdm'],
     red_spawn: '930.54 36.00 -724.58 179.83 -0.15',
     blue_spawn: '931.52 36.00 -899.48 -0.19 1.20',
-    elim_start_red: '930.47 30.00 -739.60 -1260.13 -0.90',
-    elim_start_blue: '931.50 30.00 -884.48 -1800.10 -0.60',
     spectator: '930.47 48.15 -813.14 -89.11 89.25'
   },
   {

@@ -115,35 +115,39 @@ function gambitDbInitTables() {
       + ' assists INT NOT NULL DEFAULT 0,'
       + ' longest_streak INT NOT NULL DEFAULT 0,'
       + ' revives INT NOT NULL DEFAULT 0,'
+      + ' elim_score_total DOUBLE NOT NULL DEFAULT 0,'
+      + ' elim_matches INT NOT NULL DEFAULT 0,'
+      + ' tdm_score_total DOUBLE NOT NULL DEFAULT 0,'
+      + ' tdm_matches INT NOT NULL DEFAULT 0,'
       + ' updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'
       + ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
     );
 
-    // Migration: add new columns to existing installations.
-    // Uses a separate Statement + INFORMATION_SCHEMA to reliably detect missing columns.
-    try {
-      var mStmt = conn.createStatement();
-      var newColumns = [
-        ['assists',        'INT NOT NULL DEFAULT 0'],
-        ['longest_streak', 'INT NOT NULL DEFAULT 0'],
-        ['revives',        'INT NOT NULL DEFAULT 0']
-      ];
-      for (var ci = 0; ci < newColumns.length; ci++) {
-        var colRs = mStmt.executeQuery(
-          "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE()"
-          + " AND TABLE_NAME = 'gambit_player_stats' AND COLUMN_NAME = '" + newColumns[ci][0] + "'"
-        );
-        colRs.next();
-        var colExists = colRs.getInt(1) > 0;
-        colRs.close();
-        if (!colExists) {
-          mStmt.executeUpdate('ALTER TABLE gambit_player_stats ADD COLUMN ' + newColumns[ci][0] + ' ' + newColumns[ci][1]);
-          console.info('[Gambit DB] Migration: added column ' + newColumns[ci][0]);
+    // Migration: add columns that may be missing from older installations.
+    // Each ALTER TABLE is run individually; MySQL error 1060 (Duplicate column name)
+    // is silently ignored because it just means the column already exists.
+    var psColMigrations = [
+      ['gambit_player_stats', 'assists',          'INT NOT NULL DEFAULT 0'],
+      ['gambit_player_stats', 'longest_streak',   'INT NOT NULL DEFAULT 0'],
+      ['gambit_player_stats', 'revives',          'INT NOT NULL DEFAULT 0'],
+      ['gambit_player_stats', 'elim_score_total', 'DOUBLE NOT NULL DEFAULT 0'],
+      ['gambit_player_stats', 'elim_matches',     'INT NOT NULL DEFAULT 0'],
+      ['gambit_player_stats', 'tdm_score_total',  'DOUBLE NOT NULL DEFAULT 0'],
+      ['gambit_player_stats', 'tdm_matches',      'INT NOT NULL DEFAULT 0']
+    ];
+    for (var mci = 0; mci < psColMigrations.length; mci++) {
+      try {
+        var mStmt = conn.createStatement();
+        mStmt.executeUpdate('ALTER TABLE ' + psColMigrations[mci][0]
+          + ' ADD COLUMN ' + psColMigrations[mci][1] + ' ' + psColMigrations[mci][2]);
+        mStmt.close();
+        console.info('[Gambit DB] Migration: added ' + psColMigrations[mci][0] + '.' + psColMigrations[mci][1]);
+      } catch (mColErr) {
+        var mColMsg = String(mColErr);
+        if (mColMsg.indexOf('Duplicate column') === -1 && mColMsg.indexOf('1060') === -1) {
+          console.warn('[Gambit DB] Migration warning: ' + mColErr);
         }
       }
-      mStmt.close();
-    } catch (mErr) {
-      console.error('[Gambit DB] Schema migration failed: ' + mErr);
     }
 
     stmt.executeUpdate(
@@ -169,11 +173,33 @@ function gambitDbInitTables() {
       + ' kills INT NOT NULL DEFAULT 0,'
       + ' deaths INT NOT NULL DEFAULT 0,'
       + ' damage DOUBLE NOT NULL DEFAULT 0,'
+      + ' assists INT NOT NULL DEFAULT 0,'
+      + ' match_score DOUBLE NOT NULL DEFAULT 0,'
       + ' FOREIGN KEY (match_id) REFERENCES gambit_match_history(match_id) ON DELETE CASCADE,'
       + ' INDEX idx_player (player_name),'
       + ' INDEX idx_match (match_id)'
       + ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
     );
+
+    // Migration for gambit_match_players
+    var mpColMigrations = [
+      ['gambit_match_players', 'assists',     'INT NOT NULL DEFAULT 0'],
+      ['gambit_match_players', 'match_score', 'DOUBLE NOT NULL DEFAULT 0']
+    ];
+    for (var mpi = 0; mpi < mpColMigrations.length; mpi++) {
+      try {
+        var mpStmt = conn.createStatement();
+        mpStmt.executeUpdate('ALTER TABLE ' + mpColMigrations[mpi][0]
+          + ' ADD COLUMN ' + mpColMigrations[mpi][1] + ' ' + mpColMigrations[mpi][2]);
+        mpStmt.close();
+        console.info('[Gambit DB] Migration: added ' + mpColMigrations[mpi][0] + '.' + mpColMigrations[mpi][1]);
+      } catch (mpErr) {
+        var mpErrMsg = String(mpErr);
+        if (mpErrMsg.indexOf('Duplicate column') === -1 && mpErrMsg.indexOf('1060') === -1) {
+          console.warn('[Gambit DB] Migration warning: ' + mpErr);
+        }
+      }
+    }
 
     stmt.close();
     console.info('[Gambit DB] Tables ready (gambit_player_stats, gambit_match_history, gambit_match_players).');
@@ -190,22 +216,33 @@ function gambitDbLoadAllStats() {
 
   try {
     var stmt = conn.createStatement();
-    var rs = stmt.executeQuery(
-      'SELECT player_name, damage, kills, deaths, matches_played, wins, mvps, assists, longest_streak, revives FROM gambit_player_stats'
-    );
+    // Use SELECT * so the query succeeds even if new columns haven't been migrated yet.
+    var rs = stmt.executeQuery('SELECT * FROM gambit_player_stats');
     var result = {};
     while (rs.next()) {
-      result[rs.getString('player_name')] = {
-        damage: rs.getDouble('damage'),
-        kills: rs.getInt('kills'),
-        deaths: rs.getInt('deaths'),
-        matches: rs.getInt('matches_played'),
-        wins: rs.getInt('wins'),
-        mvps: rs.getInt('mvps'),
-        assists: rs.getInt('assists'),
-        longest_streak: rs.getInt('longest_streak'),
-        revives: rs.getInt('revives')
+      var entry = {
+        damage:          rs.getDouble('damage'),
+        kills:           rs.getInt('kills'),
+        deaths:          rs.getInt('deaths'),
+        matches:         rs.getInt('matches_played'),
+        wins:            rs.getInt('wins'),
+        mvps:            rs.getInt('mvps'),
+        assists:         0,
+        longest_streak:  0,
+        revives:         0,
+        elim_score_total: 0,
+        elim_matches:    0,
+        tdm_score_total: 0,
+        tdm_matches:     0
       };
+      try { entry.assists        = rs.getInt('assists');            } catch(e) {}
+      try { entry.longest_streak = rs.getInt('longest_streak');     } catch(e) {}
+      try { entry.revives        = rs.getInt('revives');            } catch(e) {}
+      try { entry.elim_score_total = rs.getDouble('elim_score_total'); } catch(e) {}
+      try { entry.elim_matches   = rs.getInt('elim_matches');       } catch(e) {}
+      try { entry.tdm_score_total  = rs.getDouble('tdm_score_total');  } catch(e) {}
+      try { entry.tdm_matches    = rs.getInt('tdm_matches');        } catch(e) {}
+      result[rs.getString('player_name')] = entry;
     }
     rs.close();
     stmt.close();
@@ -222,13 +259,15 @@ function gambitDbSavePlayer(playerName, entry) {
 
   try {
     var ps = conn.prepareStatement(
-      'INSERT INTO gambit_player_stats (player_name, damage, kills, deaths, matches_played, wins, mvps, assists, longest_streak, revives)'
-      + ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO gambit_player_stats (player_name, damage, kills, deaths, matches_played, wins, mvps, assists, longest_streak, revives, elim_score_total, elim_matches, tdm_score_total, tdm_matches)'
+      + ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       + ' ON DUPLICATE KEY UPDATE damage=VALUES(damage), kills=VALUES(kills),'
       + ' deaths=VALUES(deaths), matches_played=VALUES(matches_played),'
       + ' wins=VALUES(wins), mvps=VALUES(mvps),'
       + ' assists=VALUES(assists), longest_streak=VALUES(longest_streak),'
-      + ' revives=VALUES(revives)'
+      + ' revives=VALUES(revives), elim_score_total=VALUES(elim_score_total),'
+      + ' elim_matches=VALUES(elim_matches), tdm_score_total=VALUES(tdm_score_total),'
+      + ' tdm_matches=VALUES(tdm_matches)'
     );
     ps.setString(1, String(playerName));
     ps.setDouble(2, Number(entry.damage) || 0);
@@ -240,6 +279,10 @@ function gambitDbSavePlayer(playerName, entry) {
     ps.setInt(8, Math.floor(Number(entry.assists) || 0) | 0);
     ps.setInt(9, Math.floor(Number(entry.longest_streak) || 0) | 0);
     ps.setInt(10, Math.floor(Number(entry.revives) || 0) | 0);
+    ps.setDouble(11, Number(entry.elim_score_total) || 0);
+    ps.setInt(12, Math.floor(Number(entry.elim_matches) || 0) | 0);
+    ps.setDouble(13, Number(entry.tdm_score_total) || 0);
+    ps.setInt(14, Math.floor(Number(entry.tdm_matches) || 0) | 0);
     ps.executeUpdate();
     ps.close();
     return true;
@@ -255,13 +298,15 @@ function gambitDbSaveAllStats(statsObj) {
 
   try {
     var ps = conn.prepareStatement(
-      'INSERT INTO gambit_player_stats (player_name, damage, kills, deaths, matches_played, wins, mvps, assists, longest_streak, revives)'
-      + ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO gambit_player_stats (player_name, damage, kills, deaths, matches_played, wins, mvps, assists, longest_streak, revives, elim_score_total, elim_matches, tdm_score_total, tdm_matches)'
+      + ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       + ' ON DUPLICATE KEY UPDATE damage=VALUES(damage), kills=VALUES(kills),'
       + ' deaths=VALUES(deaths), matches_played=VALUES(matches_played),'
       + ' wins=VALUES(wins), mvps=VALUES(mvps),'
       + ' assists=VALUES(assists), longest_streak=VALUES(longest_streak),'
-      + ' revives=VALUES(revives)'
+      + ' revives=VALUES(revives), elim_score_total=VALUES(elim_score_total),'
+      + ' elim_matches=VALUES(elim_matches), tdm_score_total=VALUES(tdm_score_total),'
+      + ' tdm_matches=VALUES(tdm_matches)'
     );
 
     var keys = Object.keys(statsObj);
@@ -278,6 +323,10 @@ function gambitDbSaveAllStats(statsObj) {
       ps.setInt(8, Math.floor(Number(e.assists) || 0) | 0);
       ps.setInt(9, Math.floor(Number(e.longest_streak) || 0) | 0);
       ps.setInt(10, Math.floor(Number(e.revives) || 0) | 0);
+      ps.setDouble(11, Number(e.elim_score_total) || 0);
+      ps.setInt(12, Math.floor(Number(e.elim_matches) || 0) | 0);
+      ps.setDouble(13, Number(e.tdm_score_total) || 0);
+      ps.setInt(14, Math.floor(Number(e.tdm_matches) || 0) | 0);
       ps.addBatch();
     }
 
@@ -296,7 +345,7 @@ function gambitDbResetPlayer(playerName) {
 
   try {
     var ps = conn.prepareStatement(
-      'UPDATE gambit_player_stats SET damage=0, kills=0, deaths=0, matches_played=0, wins=0, mvps=0, assists=0, longest_streak=0, revives=0 WHERE player_name=?'
+      'UPDATE gambit_player_stats SET damage=0, kills=0, deaths=0, matches_played=0, wins=0, mvps=0, assists=0, longest_streak=0, revives=0, elim_score_total=0, elim_matches=0, tdm_score_total=0, tdm_matches=0 WHERE player_name=?'
     );
     ps.setString(1, String(playerName));
     ps.executeUpdate();
@@ -315,7 +364,7 @@ function gambitDbResetAll() {
   try {
     var stmt = conn.createStatement();
     stmt.executeUpdate(
-      'UPDATE gambit_player_stats SET damage=0, kills=0, deaths=0, matches_played=0, wins=0, mvps=0, assists=0, longest_streak=0, revives=0'
+      'UPDATE gambit_player_stats SET damage=0, kills=0, deaths=0, matches_played=0, wins=0, mvps=0, assists=0, longest_streak=0, revives=0, elim_score_total=0, elim_matches=0, tdm_score_total=0, tdm_matches=0'
     );
     stmt.close();
     return true;
@@ -367,8 +416,8 @@ function gambitDbInsertMatchPlayers(matchId, players) {
 
   try {
     var ps = conn.prepareStatement(
-      'INSERT INTO gambit_match_players (match_id, player_name, team, kills, deaths, damage)'
-      + ' VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT INTO gambit_match_players (match_id, player_name, team, kills, deaths, damage, assists, match_score)'
+      + ' VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     );
 
     for (var i = 0; i < players.length; i++) {
@@ -379,6 +428,8 @@ function gambitDbInsertMatchPlayers(matchId, players) {
       ps.setInt(4, Math.floor(Number(p.kills) || 0) | 0);
       ps.setInt(5, Math.floor(Number(p.deaths) || 0) | 0);
       ps.setDouble(6, Number(p.damage) || 0);
+      ps.setInt(7, Math.floor(Number(p.assists) || 0) | 0);
+      ps.setDouble(8, Number(p.match_score) || 0);
       ps.addBatch();
     }
 

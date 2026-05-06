@@ -11,7 +11,7 @@ gambit_reset_downs
 execute as @a[gamemode=!creative] run scoreboard players operation @s gun_deaths_prev = @s gun_deaths
 execute as @a[gamemode=!creative] run scoreboard players operation @s tdm_deaths_counted = @s gun_deaths
 execute as @a[tag=gun_optout,gamemode=!creative] run gamemode spectator @s
-execute as @a[tag=!marksman,tag=!breacher,tag=!smg2,tag=!assault,tag=!sniper,tag=!ranger,tag=!burst,gamemode=!creative,gamemode=!spectator,tag=!gun_optout] run tag @s add assault
+execute as @a[tag=!marksman,tag=!breacher,tag=!flanker,tag=!assault,tag=!sniper,tag=!ranger,tag=!burst,gamemode=!creative,gamemode=!spectator,tag=!gun_optout] run tag @s add assault
 function gun:kits/armor
 function gun:kits/equip
 effect give @a[gamemode=!creative,gamemode=!spectator,tag=!gun_optout] minecraft:regeneration 5 255 true
