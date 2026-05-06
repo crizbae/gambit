@@ -5,3 +5,4 @@ function gun:kits/single/assault
 function gun:kits/single/sniper
 function gun:kits/single/ranger
 function gun:kits/single/burst
+function gun:kits/single/sentry

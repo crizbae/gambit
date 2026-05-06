@@ -25,9 +25,9 @@ ServerEvents.commandRegistry(function (event) {
         Commands.literal('off')
           .executes(function (ctx) {
             trapdoorLocked = true;
-            ctx.source.server.runCommandSilent(
-              'tellraw @a ["",{"text":"[Gambit] ","color":"gold","bold":true},{"text":"Trapdoor interaction has been ","color":"yellow"},{"text":"disabled","color":"red","bold":true},{"text":".","color":"yellow"}]'
-            );
+            ctx.source.server.players.forEach(function (p) {
+              if (p.hasPermission(2)) p.tell('§6[Gambit] §eTrapdoor interaction has been §cdisabled§e.');
+            });
             return 1;
           })
       )
@@ -35,9 +35,9 @@ ServerEvents.commandRegistry(function (event) {
         Commands.literal('on')
           .executes(function (ctx) {
             trapdoorLocked = false;
-            ctx.source.server.runCommandSilent(
-              'tellraw @a ["",{"text":"[Gambit] ","color":"gold","bold":true},{"text":"Trapdoor interaction has been ","color":"yellow"},{"text":"enabled","color":"green","bold":true},{"text":".","color":"yellow"}]'
-            );
+            ctx.source.server.players.forEach(function (p) {
+              if (p.hasPermission(2)) p.tell('§6[Gambit] §eTrapdoor interaction has been §aenabled§e.');
+            });
             return 1;
           })
       )

@@ -6,6 +6,6 @@ execute as @a at @s if block ~ ~-1 ~ minecraft:diorite_stairs if block ~ ~-2 ~ m
 execute if entity @a[x=26,y=-6,z=-6,dx=12,dy=13,dz=12,team=lobby] as @a[x=26,y=-6,z=-6,dx=12,dy=13,dz=12] unless entity @s[team=sumo] run team join sumo @s
 
 effect give @a[team=lobby] saturation 16 1 true
-execute as @a[team=lobby,gamemode=!creative] unless data entity @s Inventory[{id:"minecraft:written_book",tag:{title:"Gambit Field Manual"}}] run function gun:lobby/give_guide
+execute as @a[team=lobby,gamemode=!creative,tag=!gun_optout] unless data entity @s Inventory[{id:"minecraft:written_book",tag:{title:"Gambit Field Manual"}}] run function gun:lobby/give_guide
 effect give @a[team=sumo] saturation 16 1 true
 effect give @a[team=sumo] regeneration 5 25 true

@@ -5,7 +5,7 @@
 //    /gambitstats me                      — show your stats + scores (any player)
 //    /gambitstats player <playerName>     — inspect one player (any player)
 //    /gambitstats top <metric>            — show top players by metric (any player)
-//      metrics: score, elimscore, tdmscore, kd, winpct, damage, kills, deaths, wins, matches, mvps, dpl, assists, streak, revives
+//      metrics: kd, winpct, damage, kills, deaths, wins, matches, mvps, dpl, assists, streak, revives
 //    /gambitstats postgame                — broadcast post-game top 5 kills, top 5 damage, and MVP (ops/functions)
 //    /gambitstats <playerName>            — inspect one player (ops only, legacy alias)
 //
@@ -70,6 +70,7 @@ var attackerCacheCleanupTicker = 0;
 var statsSaveTicker = 0;
 var statsDirty = false;
 var billboardUpdateTicker = 0;
+var firstBloodDone = false;
 var billboardPositions = { combined: null, elim: null, tdm: null }; // {x,y,z} per mode
 
 // ── Down limit config ────────────────────────────────────────
@@ -643,13 +644,10 @@ function applyMatchResult(server, targetArg, addMatch, addWin) {
 }
 
 function formatEntry(name, e) {
-  return '§e' + name + '§r — §aScore: §f' + getCombinedAvgScore(e).toFixed(0) + '§r | §bKD: §f' + getKD(e).toFixed(2);
+  return '§e' + name + '§r — §bKD: §f' + getKD(e).toFixed(2) + '§r | §aDPL: §f' + getAvgDamagePerLife(e).toFixed(1);
 }
 
 function metricLabel(metric) {
-  if (metric === 'score')     return 'Combined Score/Match';
-  if (metric === 'elimscore') return 'Elim Score/Match';
-  if (metric === 'tdmscore')  return 'TDM Score/Match';
   if (metric === 'kd') return 'KD';
   if (metric === 'winpct') return 'Win %';
   if (metric === 'damage') return 'Damage';
@@ -667,9 +665,6 @@ function metricLabel(metric) {
 
 function metricValue(e, metric) {
   if (!e) return 0;
-  if (metric === 'score')     return getCombinedAvgScore(e);
-  if (metric === 'elimscore') return getElimAvgScore(e);
-  if (metric === 'tdmscore')  return getTdmAvgScore(e);
   if (metric === 'kd') return getKD(e);
   if (metric === 'winpct') return getWinPct(e);
   if (metric === 'damage') return e.damage;
@@ -686,7 +681,6 @@ function metricValue(e, metric) {
 }
 
 function formatMetricValue(value, metric) {
-  if (metric === 'score' || metric === 'elimscore' || metric === 'tdmscore') return Number(value).toFixed(0);
   if (metric === 'kd') return Number(value).toFixed(2);
   if (metric === 'winpct') return Number(value).toFixed(1) + '%';
   if (metric === 'damage') return Number(value).toFixed(1);
@@ -856,8 +850,7 @@ function getSortedEntries() {
   var arr = [];
   for (var i = 0; i < keys.length; i++) {
     var _e = stats[keys[i]];
-    var _modeMatches = (_e.elim_matches || 0) + (_e.tdm_matches || 0);
-    if (_modeMatches >= LEADERBOARD_MIN_MATCHES_MODE) {
+    if ((_e.elim_matches || 0) >= 3 && (_e.tdm_matches || 0) >= 3) {
       arr.push([keys[i], _e]);
     }
   }
@@ -996,6 +989,7 @@ PlayerEvents.loggedOut(function(event) {
   server.runCommandSilent('tag ' + name + ' remove ranger');
   server.runCommandSilent('tag ' + name + ' remove flanker');
   server.runCommandSilent('tag ' + name + ' remove sniper');
+  server.runCommandSilent('tag ' + name + ' remove sentry');
 
   // Scoreboard timers / counters
   server.runCommandSilent('scoreboard players set ' + name + ' tdm_respawn_timer 0');
@@ -1321,11 +1315,53 @@ EntityEvents.death(function(event) {
   killerEntry.kills += 1;
   killerRoundEntry.kills += 1;
 
+  // First blood announcement.
+  if (!firstBloodDone) {
+    firstBloodDone = true;
+    var _kColor = killerPlayer
+      ? (hasTagSafe(killerPlayer, 'Red') ? 'red' : (hasTagSafe(killerPlayer, 'Blue') ? 'aqua' : 'red'))
+      : 'red';
+    var _vColor = dead
+      ? (hasTagSafe(dead, 'Red') ? 'red' : (hasTagSafe(dead, 'Blue') ? 'aqua' : 'red'))
+      : 'red';
+    tellAll(event.server, '["",' +
+      '{"text":"\u2620 FIRST BLOOD ","color":"dark_red","bold":true},' +
+      '{"text":"' + killerName.replace(/"/g, '') + '","color":"' + _kColor + '","bold":true},' +
+      '{"text":" drew first blood on ","color":"dark_red","bold":true},' +
+      '{"text":"' + deadName.replace(/"/g, '') + '","color":"' + _vColor + '","bold":true}' +
+    ']');
+  }
+
   // Kill streak tracking.
   currentStreaks[killerName] = (currentStreaks[killerName] || 0) + 1;
   var streak = currentStreaks[killerName];
   if (streak > (killerEntry.longest_streak || 0)) {
     killerEntry.longest_streak = streak;
+  }
+
+  // TDM kill streak rewards + announcements.
+  var _isTdm = typeof currentModeId !== 'undefined' && currentModeId === 1;
+  if (_isTdm && killerPlayer && streak >= 4 && streak % 4 === 0) {
+    var _kColorStreak = hasTagSafe(killerPlayer, 'Red') ? 'red' : 'aqua';
+    tellAll(event.server, '["",' +
+      '{"text":"' + killerName.replace(/"/g, '') + '","color":"' + _kColorStreak + '","bold":true},' +
+      '{"text":" is on a ' + streak + '-kill streak!","color":"gold","bold":true}' +
+    ']');
+    // Item rewards at each milestone.
+    if (streak === 4) {
+      event.server.runCommandSilent('give ' + killerName + ' minecraft:golden_apple 3');
+    } else if (streak === 8) {
+      event.server.runCommandSilent('give ' + killerName + ' marbledsfirstaid:panacea_pills 1');
+    } else if (streak === 12) {
+      event.server.runCommandSilent('give ' + killerName + ' marbledsfirstaid:morphine 1');
+    } else if (streak === 16) {
+      event.server.runCommandSilent('give ' + killerName + ' marbledsfirstaid:panacea_pills 1');
+    } else if (streak === 20) {
+      event.server.runCommandSilent('give ' + killerName + ' minecraft:golden_apple 3');
+      event.server.runCommandSilent('give ' + killerName + ' marbledsfirstaid:bandages 5');
+    } else if (streak === 24) {
+      event.server.runCommandSilent('give ' + killerName + ' minecraft:enchanted_golden_apple 1');
+    }
   }
 
   markStatsDirty();
@@ -1363,20 +1399,19 @@ ServerEvents.commandRegistry(function(event) {
   event.register(
     Commands.literal('gambitstats')
 
-      // /gambitstats — show combined leaderboard
+      // /gambitstats — show usage help
       .executes(function(ctx) {
         var player = ctx.source.player;
         if (!player || !player.tell) return 1;
 
-        var sorted = getSortedEntries();
-        var limit = Math.min(10, sorted.length);
-        player.tell('§6§l── Gambit Combined Leaderboard ──');
-        player.tell('§7Score = avg points per match across all modes (min ' + LEADERBOARD_MIN_MATCHES_MODE + ' matches)');
-        for (var i = 0; i < limit; i++) {
-          player.tell('§7' + (i + 1) + '. ' + formatEntry(sorted[i][0], sorted[i][1]));
-        }
-        if (limit === 0) player.tell('§7No players have played ' + LEADERBOARD_MIN_MATCHES_MODE + '+ matches yet.');
-        player.tell('§6§l───────────────────────────────');
+        player.tell('§6§l── Gambit Stats ──');
+        player.tell('§e/gambitstats me §7— your stats');
+        player.tell('§e/gambitstats player <name> §7— another player\'s stats');
+        player.tell('§e/gambitstats combined §7— combined leaderboard');
+        player.tell('§e/gambitstats elim §7— elimination leaderboard');
+        player.tell('§e/gambitstats tdm §7— TDM leaderboard');
+        player.tell('§e/gambitstats top <metric> §7— top 10 by metric');
+        player.tell('§7Metrics: §fkd, winpct, kills, deaths, damage, wins, matches, mvps, dpl, assists, streak, revives');
         return 1;
       })
 
@@ -1427,7 +1462,7 @@ ServerEvents.commandRegistry(function(event) {
                 var metric = String(StringArgumentType.getString(ctx, 'metric')).toLowerCase();
                 var label = metricLabel(metric);
                 if (!label) {
-                  player.tell('§e[Gambit Stats] Unknown metric "' + metric + '". Use: score, elimscore, tdmscore, kd, winpct, damage, kills, deaths, wins, matches, mvps, dpl, assists, streak, revives.');
+                  player.tell('§e[Gambit Stats] Unknown metric "' + metric + '". Use: kd, winpct, damage, kills, deaths, wins, matches, mvps, dpl, assists, streak, revives.');
                   return 1;
                 }
 
@@ -1571,22 +1606,26 @@ ServerEvents.commandRegistry(function(event) {
             var arr = [];
             for (var i = 0; i < keys.length; i++) {
               var e = stats[keys[i]];
-              var totalModeMatches = (e.elim_matches || 0) + (e.tdm_matches || 0);
-              if (totalModeMatches >= LEADERBOARD_MIN_MATCHES_MODE) {
+              if ((e.elim_matches || 0) >= 3 && (e.tdm_matches || 0) >= 3) {
                 arr.push([keys[i], e]);
               }
             }
-            arr.sort(function(a, b) { return getCombinedAvgScore(b[1]) - getCombinedAvgScore(a[1]); });
+            arr.sort(function(a, b) {
+              var scoreDiff = getCombinedAvgScore(b[1]) - getCombinedAvgScore(a[1]);
+              if (scoreDiff !== 0) return scoreDiff;
+              var kdDiff = getKD(b[1]) - getKD(a[1]);
+              if (kdDiff !== 0) return kdDiff;
+              return getAvgDamagePerLife(b[1]) - getAvgDamagePerLife(a[1]);
+            });
             var limit = Math.min(10, arr.length);
 
             player.tell('§6§l── Combined Leaderboard ──');
             if (limit === 0) {
-              player.tell('§7No players with ' + LEADERBOARD_MIN_MATCHES_MODE + '+ scored matches yet.');
+              player.tell('§7No players with 3+ elim and 3+ TDM matches yet.');
             } else {
               for (var i = 0; i < limit; i++) {
                 var e = arr[i][1];
-                var totalM = (e.elim_matches || 0) + (e.tdm_matches || 0);
-                player.tell('§7' + (i + 1) + '. §e' + arr[i][0] + '§r — §6Avg Score/Match: §f' + getCombinedAvgScore(e).toFixed(1) + ' §7(' + totalM + ' matches)');
+                player.tell('§7' + (i + 1) + '. §e' + arr[i][0] + '§r — §bKD: §f' + getKD(e).toFixed(2) + '§r | §aDPL: §f' + getAvgDamagePerLife(e).toFixed(1));
               }
             }
             player.tell('§6§l──────────────────────────');
@@ -1871,7 +1910,7 @@ ServerEvents.commandRegistry(function(event) {
 ServerEvents.commandRegistry(function(event) {
   var Commands = event.commands;
 
-  var VALID_KITS = ['assault', 'breacher', 'burst', 'flanker', 'marksman', 'ranger', 'sniper'];
+  var VALID_KITS = ['assault', 'breacher', 'burst', 'flanker', 'marksman', 'ranger', 'sniper', 'sentry'];
 
   event.register(
     Commands.literal('gambitkit')
@@ -1920,6 +1959,8 @@ ServerEvents.commandRegistry(function(event) {
     ctx.source.server.runCommandSilent(
       'execute as ' + playerName + ' in minecraft:overworld run summon minecraft:text_display ' + x + ' ' + y + ' ' + z + ' ' + nbt
     );
+    // Forceload the chunk so the text_display stays loaded and auto-updates work.
+    ctx.source.server.runCommandSilent('execute in minecraft:overworld run forceload add ' + x + ' ' + z);
     player.tell('§a[Gambit Board] ' + mode.charAt(0).toUpperCase() + mode.slice(1) + ' billboard placed at ' + x + ' ' + y + ' ' + z + '.');
     return 1;
   }
@@ -1928,9 +1969,13 @@ ServerEvents.commandRegistry(function(event) {
     var player = ctx.source.player;
     if (!player || !player.tell) return 1;
     var tag = BILLBOARD_TAGS[mode];
+    var oldPos = billboardPositions[mode];
     billboardPositions[mode] = null;
     saveBillboardPositions();
     ctx.source.server.runCommandSilent('execute in minecraft:overworld run kill @e[type=minecraft:text_display,tag=' + tag + ']');
+    if (oldPos) {
+      ctx.source.server.runCommandSilent('execute in minecraft:overworld run forceload remove ' + oldPos.x + ' ' + oldPos.z);
+    }
     player.tell('§a[Gambit Board] ' + mode.charAt(0).toUpperCase() + mode.slice(1) + ' billboard removed.');
     return 1;
   }
@@ -1955,8 +2000,12 @@ ServerEvents.commandRegistry(function(event) {
             if (!player || !player.tell) return 1;
             var modes = ['combined', 'elim', 'tdm'];
             for (var mi = 0; mi < modes.length; mi++) {
+              var oldPos = billboardPositions[modes[mi]];
               billboardPositions[modes[mi]] = null;
               ctx.source.server.runCommandSilent('execute in minecraft:overworld run kill @e[type=minecraft:text_display,tag=' + BILLBOARD_TAGS[modes[mi]] + ']');
+              if (oldPos) {
+                ctx.source.server.runCommandSilent('execute in minecraft:overworld run forceload remove ' + oldPos.x + ' ' + oldPos.z);
+              }
             }
             saveBillboardPositions();
             player.tell('§a[Gambit Board] All billboards removed.');
@@ -2003,6 +2052,7 @@ ServerEvents.commandRegistry(function(event) {
         syringeCounts = {};      // force clean syringe baseline so first poll doesn't false-credit
         recentlyDowned = {};     // discard any downed windows that bled over from last match
         roundStats = {};         // clear per-round kill/damage tallies so postgame shows only this match
+        firstBloodDone = false;  // reset first blood for the new match
         return 1;
       })
   );

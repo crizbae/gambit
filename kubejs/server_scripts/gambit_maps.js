@@ -29,15 +29,6 @@
 // ── Map definitions ──────────────────────────────────────────
 var MAPS = [
   {
-    id: 1,
-    name: 'Forest',
-    preset: 'forest',
-    modes: ['elimination', 'tdm'],
-    red_spawn: '303.63 38.00 -38.84 -58.03 9.75',
-    blue_spawn: '308.43 34.00 156.65 628.82 -0.15',
-    spectator: '306.03 46.00 58.90 180.00 15.00'
-  },
-  {
     id: 2,
     name: 'Pine Crossing',
     preset: 'pinecrossing',
@@ -51,9 +42,9 @@ var MAPS = [
     name: 'Trenches',
     preset: 'trenches',
     modes: ['elimination'],
-    red_spawn: '146.49 28.00 -554.46 -269.36 0.45',
-    blue_spawn: '18.49 28.00 -550.51 -449.46 0.75',
-    spectator: '80.30 51.16 -595.66 -361.71 28.80'
+    red_spawn: '480.17 6.00 -986.60 1169.63 -10.79',
+    blue_spawn: '317.70 6.00 -982.48 990.08 -7.94',
+    spectator: '395.02 31.75 -967.84 1259.64 34.81'
   },
   {
     id: 4,
@@ -87,9 +78,9 @@ var MAPS = [
     name: 'Yuritopia',
     preset: 'yuritopia',
     modes: ['tdm'],
-    red_spawn: '-9.30 44.00 -1966.70 56.39 -0.77',
-    blue_spawn: '-194.50 44.00 -1929.48 -122.68 -0.75',
-    spectator: '-104.08 74.62 -1968.77 -7.54 41.81'
+    red_spawn: '9.5 45.5 -2069.5 -1320 0',
+    blue_spawn: '-212.5 45.5 -2177.5 -1140 0',
+    spectator: '-103.97 75.03 -2081.76 -1259.31 36.67'
   },
   {
     id: 8,
@@ -99,15 +90,6 @@ var MAPS = [
     red_spawn: '345.5 47.50 -381.5 180 0',
     blue_spawn: '345.5 47.50 -519.5 360 0',
     spectator: '400 63 -449.5 450 25'
-  },
-  {
-    id: 9,
-    name: 'Trench Modified',
-    preset: 'trench_modified',
-    modes: ['elimination'],
-    red_spawn: '170.50 34.00 -705.50 -628.00 -0.90',
-    blue_spawn: '7.30 34.00 -701.53 -808.85 -3.15',
-    spectator: '86.38 54.49 -660.33 -538.46 33.52'
   },
   {
     id: 10,
@@ -123,9 +105,18 @@ var MAPS = [
     name: 'Vivian Station',
     preset: 'vivianstation',
     modes: ['elimination'],
-    red_spawn: '507.45 92.00 -606.52 2698.32 5.31',
+    red_spawn: '507.59 92.00 -605.40 -181.56 1.49',
     blue_spawn: '507.49 93.00 -764.40 2880.38 54.51',
     spectator: '507.38 104.20 -693.67 2874.55 0.81'
+  },
+  {
+    id: 12,
+    name: 'de_Solace',
+    preset: 'solace',
+    modes: ['elimination'],
+    red_spawn: '-126.56 23.00 -444.50 -293.31 -0.30',
+    blue_spawn: '-211.57 23.00 -440.43 -98.86 -0.60',
+    spectator: '-164.89 46.62 -457.58 -361.05 52.65'
   }
   
 ];

@@ -109,6 +109,17 @@ ServerEvents.loaded(function(event) {
   // Ensure teams exist and lobby loop is running
   event.server.runCommandSilent('function gun:teams/build');
   event.server.runCommandSilent('schedule function gun:selectors/loop 1t');
+
+  // Persistent event server settings — applied at load so they're active from the start
+  event.server.runCommandSilent('yawp global add flag item-drop Denied');
+  event.server.runCommandSilent('gamerule keepInventory true');
+  event.server.runCommandSilent('trapdoor off');
+  event.server.runCommandSilent('gamerule reducedDebugInfo true');
+  event.server.runCommandSilent('gamerule announceAdvancements false');
+  event.server.runCommandSilent('gamerule doDaylightCycle false');
+  event.server.runCommandSilent('time set 6000');
+  event.server.runCommandSilent('gamerule doWeatherCycle false');
+  event.server.runCommandSilent('weather clear');
 });
 
 ServerEvents.commandRegistry(function(event) {
@@ -173,6 +184,21 @@ ServerEvents.commandRegistry(function(event) {
             return 1;
           })
       )
+  );
+
+  event.register(
+    Commands.literal('devmode')
+      .requires(function(src) { return src.hasPermission(2); })
+      .executes(function(ctx) {
+        var server = ctx.source.server;
+        server.runCommandSilent('yawp global remove flag item-drop');
+        server.runCommandSilent('trapdoor on');
+        server.runCommandSilent('gamerule reducedDebugInfo false');
+        if (ctx.source.player) {
+          ctx.source.player.tell('§6[Gambit Dev] §eItem-drop enabled, trapdoors on, debug info visible.');
+        }
+        return 1;
+      })
   );
 
   event.register(
