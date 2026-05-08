@@ -11,6 +11,7 @@ execute at @a[gamemode=spectator] as @a[gamemode=spectator] run gamemode adventu
 tag @a remove gun_dead
 tag @a remove gun_just_died
 tag @a remove gun_spec_tp_pending
+tag @a remove gun_in_match
 scoreboard players set @a spec_respawn_timer 0
 scoreboard players set @a gun_downs 0
 execute as @a[tag=Red] run clear @s
@@ -25,4 +26,5 @@ team join lobby @a[team=blue]
 schedule clear gun:tdm/spawnpoints
 spawnpoint @a 0 0 0
 schedule function gun:selectors/loop 1t
+time set 6000
 gambit_match_end

@@ -117,6 +117,25 @@ var MAPS = [
     red_spawn: '-126.56 23.00 -444.50 -293.31 -0.30',
     blue_spawn: '-211.57 23.00 -440.43 -98.86 -0.60',
     spectator: '-164.89 46.62 -457.58 -361.05 52.65'
+  },
+  {
+    id: 13,
+    name: 'Arena',
+    preset: 'arena1',
+    modes: ['elimination'],
+    red_spawn: '-155.48 84.00 -2392.52 -10799.89 0.15',
+    blue_spawn: '-155.58 84.00 -2320.57 -10619.28 0.30',
+    spectator: '-167.26 106.03 -2356.22 -10530.17 62.55',
+    time: 18000
+  },
+  {
+    id: 14,
+    name: 'Arena',
+    preset: 'arena2',
+    modes: ['elimination'],
+    red_spawn: '-41.49 84.00 -2322.47 -3420.10 -0.30',
+    blue_spawn: '-41.50 84.00 -2394.55 -3600.09 -1.35',
+    spectator: '-23.30 104.49 -2357.96 -3509.07 54.30'
   }
   
 ];
@@ -210,7 +229,29 @@ function _executeStart(server) {
   currentModeId = stagedModeId;
   matchStartTime = Date.now();
 
-  server.runCommandSilent('function gun:teams/randomize');
+  // In tournament mode, skip random assignment and use pre-assigned rosters.
+  // Read the JS variable directly (shared Rhino scope) — avoids the scoreboard
+  // being reset to 0 by ServerEvents.loaded on any /kubejs reload server_scripts.
+  var tournamentActive = typeof tournamentMode !== 'undefined' && tournamentMode;
+  if (tournamentActive) {
+    // Validate rosters here before continuing — _applyTournamentRosters returning early
+    // would not stop the rest of _executeStart from running (countdown, death/loop, etc.).
+    var tRed  = typeof tournamentRedRoster  !== 'undefined' ? tournamentRedRoster  : [];
+    var tBlue = typeof tournamentBlueRoster !== 'undefined' ? tournamentBlueRoster : [];
+    if (tRed.length === 0 || tBlue.length === 0) {
+      server.runCommandSilent(
+        'tellraw @a ["",{"text":"[Tournament] ","color":"gold"},{"text":"Cannot start — both rosters must have at least one player. Use /tournament red and /tournament blue.","color":"red"}]'
+      );
+      // Roll back state set above so a subsequent /start works cleanly.
+      currentMapId    = 0;
+      currentModeId   = 0;
+      matchStartTime  = 0;
+      return;
+    }
+    server.runCommandSilent('gambit_tournament_apply');
+  } else {
+    server.runCommandSilent('function gun:teams/randomize');
+  }
   server.runCommandSilent('scoreboard players set #map map_id ' + map.id);
 
   var redCoords = isTdm ? map.red_spawn : (map.elim_start_red || map.red_spawn);
@@ -226,7 +267,35 @@ function _executeStart(server) {
     server.runCommandSilent('scoreboard players set #mode mode_respawns 0');
   }
 
-  server.runCommandSilent('function gun:starts/general');
+  // Tournament mode uses a separate mcfunction that scopes all player commands to Red/Blue only,
+  // leaving everyone else completely untouched.
+  if (tournamentActive) {
+    server.runCommandSilent('function gun:starts/tournament_general');
+  } else {
+    server.runCommandSilent('function gun:starts/general');
+  }
+
+  // Apply per-map time override (starts/general and tournament_general both set time 6000 by default).
+  if (map.time !== undefined && map.time !== null) {
+    server.runCommandSilent('time set ' + Math.floor(map.time));
+  }
+
+  // Non-tournament: put gun_optout players into spectator and TP them to the map view.
+  if (!tournamentActive) {
+    server.runCommandSilent('execute as @a[tag=gun_optout,gamemode=!creative] run gamemode spectator @s');
+    server.runCommandSilent('execute as @a[tag=gun_optout,gamemode=spectator] run function gun:starts/spectator_tpmap');
+  }
+
+  // Tournament: TP non-participant spectators (forced by tournament_general) to the map view.
+  if (tournamentActive) {
+    server.runCommandSilent('execute as @a[gamemode=spectator,tag=!Red,tag=!Blue] run function gun:starts/spectator_tpmap');
+  }
+
+  // Tournament mode: strip syringes after kits have been fully applied.
+  if (tournamentActive) {
+    server.runCommandSilent('item replace entity @a[tag=Red,gamemode=!creative,gamemode=!spectator] hotbar.7 with minecraft:air');
+    server.runCommandSilent('item replace entity @a[tag=Blue,gamemode=!creative,gamemode=!spectator] hotbar.7 with minecraft:air');
+  }
 
   if (isTdm) {
     server.runCommandSilent('scoreboard objectives setdisplay sidebar tdm_kills');
@@ -395,6 +464,7 @@ ServerEvents.commandRegistry(function (event) {
         currentMapId = 0;
         currentModeId = 0;
         matchStartTime = 0;
+        firstBloodDone = false; // belt-and-suspenders reset (also done in gambit_reset_downs)
         autostartTicksLeft = 0;
         autostartLastSecondsLeft = -1;
         return 1;

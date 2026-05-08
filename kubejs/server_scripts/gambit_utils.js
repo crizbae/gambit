@@ -14,6 +14,15 @@
 //   /setgoal <n>   - Set the TDM kill target (OP only, 1–500).
 //                    Broadcasts the new target to all players.
 //
+//   /trapdoor off  - Prevent non-OP players from interacting with trapdoors (OP only).
+//   /trapdoor on   - Restore trapdoor interaction for all players (OP only).
+//                    State resets to unlocked on server reload.
+//
+//   /devmode       - Undo event server restrictions for testing (OP only).
+//                    Re-enables item drops, trapdoors, and debug info.
+//
+//   /deathmatch    - Apply glowing to all living active players (OP only).
+//
 // Map commands (/setmap, /start) are in gambit_maps.js.
 //
 // Notes:
@@ -23,6 +32,13 @@
 
 var OPT_OUT_TAG = 'gun_optout';
 var IntegerArgumentType = Java.loadClass('com.mojang.brigadier.arguments.IntegerArgumentType');
+var trapdoorLocked = false;
+
+BlockEvents.rightClicked(function (event) {
+  if (!trapdoorLocked) return;
+  if (event.block.id.indexOf('trapdoor') === -1) return;
+  event.cancel();
+});
 
 function runForPlayer(player, command) {
   if (!player || !player.server || !command) return;
@@ -138,6 +154,19 @@ ServerEvents.commandRegistry(function(event) {
 
         setOptOutState(player, true);
         player.tell('§e[Gambit Queue] Spectate mode enabled. Use §f/play §eto rejoin the queue.');
+
+        // If a match is active, TP to the map spectator viewpoint.
+        if (typeof currentMapId !== 'undefined' && currentMapId !== 0) {
+          var _specMap = typeof getMapById === 'function' ? getMapById(currentMapId) : null;
+          if (_specMap && _specMap.spectator) {
+            var _specName = player.name && player.name.string ? player.name.string : null;
+            if (_specName) {
+              var _specServer = ctx.source.server;
+              _specServer.runCommandSilent('gamemode spectator ' + _specName);
+              _specServer.runCommandSilent('execute in minecraft:overworld run tp ' + _specName + ' ' + _specMap.spectator);
+            }
+          }
+        }
         return 1;
       })
   );
@@ -181,6 +210,27 @@ ServerEvents.commandRegistry(function(event) {
             ctx.source.server.runCommandSilent(
               'tellraw @a ["[Gambit] ",{"text":"TDM kill target set to ","color":"yellow"},{"text":"' + kills + '","color":"aqua"},{"text":" kills.","color":"yellow"}]'
             );
+            return 1;
+          })
+      )
+  );
+
+  event.register(
+    Commands.literal('trapdoor')
+      .requires(function(src) { return src.hasPermission(2); })
+      .then(
+        Commands.literal('off')
+          .executes(function(ctx) {
+            trapdoorLocked = true;
+            if (ctx.source.player) ctx.source.player.tell('§6[Gambit] §eTrapdoor interaction has been §cdisabled§e.');
+            return 1;
+          })
+      )
+      .then(
+        Commands.literal('on')
+          .executes(function(ctx) {
+            trapdoorLocked = false;
+            if (ctx.source.player) ctx.source.player.tell('§6[Gambit] §eTrapdoor interaction has been §aenabled§e.');
             return 1;
           })
       )
