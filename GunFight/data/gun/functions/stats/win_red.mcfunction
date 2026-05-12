@@ -1,1 +1,1 @@
-gambitstats addwin red
+stats addwin red

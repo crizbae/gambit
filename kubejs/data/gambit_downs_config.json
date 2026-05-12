@@ -1,6 +1,6 @@
 {
   "enabled": true,
-  "max_downs": 2,
+  "max_downs": 1,
   "bypass_source_types": [
     "fall",
     "inFire",

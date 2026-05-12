@@ -12,8 +12,7 @@ var LAST_TACZ_ATTACK_TTL_MS          = 15000;
 var ATTACKER_CACHE_CLEANUP_INTERVAL_TICKS = 200;
 
 // ── Canonical kit list (Item 3) ───────────────────────────────
-// Single source of truth for JS. Used by loggedOut cleanup and
-// /gambitkit command (gambit_commands.js).
+// Single source of truth for JS. Used by loggedOut cleanup.
 var VALID_KITS = ['assault', 'breacher', 'burst', 'flanker', 'marksman', 'ranger', 'sniper', 'sentry'];
 
 // ── Runtime tracking state ────────────────────────────────────
@@ -332,6 +331,8 @@ ServerEvents.tick(function(event) {
               loadEntryFromPlayer(p);
               var reviverEntry = getEntry(pName);
               reviverEntry.revives = (reviverEntry.revives || 0) + 1;
+              if (!reviverEntry.session || reviverEntry.session.date !== getTodayDateString()) reviverEntry.session = makeDefaultSession();
+              reviverEntry.session.revives = (reviverEntry.session.revives || 0) + 1;
               markStatsDirty();
               saveEntryToPlayer(p);
             }
@@ -363,18 +364,30 @@ EntityEvents.hurt(function(event) {
   // ── TACZ stats tracking ───────────────────────────────────
   var bullet      = source.immediate;
   var isTaczBullet = bullet && bullet.type.toString().indexOf('tacz') !== -1;
+  var _hurtMatchActive = typeof matchActive === 'undefined' || matchActive;
   if (isTaczBullet) {
     var shooter = source.player;
     if (shooter) {
       var shooterName  = shooter.name.string;
-      var entry        = getEntry(shooterName);
-      var roundEntry   = getRoundEntry(shooterName);
-      // Cap to remaining health to avoid overkill inflation
-      var actualDamage = Math.min(damage, entity.health);
-      if (typeof statsTrackingEnabled === 'undefined' || statsTrackingEnabled) entry.damage += actualDamage;
-      roundEntry.damage += actualDamage;
-      if (entity && entity.player) rememberRecentAttacker(entity, shooter);
-      if (typeof statsTrackingEnabled === 'undefined' || statsTrackingEnabled) saveEntryToPlayer(shooter);
+      if (_hurtMatchActive) {
+        var entry        = getEntry(shooterName);
+        var roundEntry   = getRoundEntry(shooterName);
+        // Cap to remaining health to avoid overkill inflation
+        var actualDamage = Math.min(damage, entity.health);
+        if (typeof statsTrackingEnabled === 'undefined' || statsTrackingEnabled) entry.damage += actualDamage;
+        roundEntry.damage += actualDamage;
+        var _dmgInt = Math.floor(actualDamage);
+        if (_dmgInt > 0) event.server.runCommandSilent('scoreboard players add ' + shooterName + ' life_dmg ' + _dmgInt);
+        if (typeof statsTrackingEnabled === 'undefined' || statsTrackingEnabled) saveEntryToPlayer(shooter);
+      }
+      if (entity && entity.player) {
+        // Only track cross-team hits — skip friendly fire so teammates can't
+        // steal kill credit or assist credit.
+        var _enemyTeam = (hasTagSafe(entity, 'Red') && hasTagSafe(shooter, 'Blue'))
+                      || (hasTagSafe(entity, 'Blue') && hasTagSafe(shooter, 'Red'))
+                      || (!hasTagSafe(entity, 'Red') && !hasTagSafe(entity, 'Blue'));
+        if (_enemyTeam) rememberRecentAttacker(entity, shooter);
+      }
     }
   }
 
@@ -382,7 +395,8 @@ EntityEvents.hurt(function(event) {
   if (entity && entity.player
       && (hasTagSafe(entity, 'Red') || hasTagSafe(entity, 'Blue'))
       && !hasTagSafe(entity, 'gun_just_died')
-      && damage >= entity.health) {
+      && damage >= entity.health
+      && _hurtMatchActive) {
 
     var srcMsgId  = '';
     try { srcMsgId = String(source.getMsgId()); } catch (e) {}
@@ -420,9 +434,17 @@ EntityEvents.hurt(function(event) {
 
     // Store downer for bleed-out kill credit (always updated to most recent downer).
     // firstDownerNames is set once per life and never overwritten — used for assist credit.
+    // Only set when the downer is on the opposite team (block friendly-fire credit).
     if (downerNameHurt && victimName && downerNameHurt !== victimName) {
-      downerNames[victimName] = downerNameHurt;
-      if (!firstDownerNames[victimName]) firstDownerNames[victimName] = downerNameHurt;
+      var _downerP = getOnlinePlayerByName(event.server, downerNameHurt);
+      var _friendlyFire = _downerP && (
+        (hasTagSafe(entity, 'Red')  && hasTagSafe(_downerP, 'Red')) ||
+        (hasTagSafe(entity, 'Blue') && hasTagSafe(_downerP, 'Blue'))
+      );
+      if (!_friendlyFire) {
+        downerNames[victimName] = downerNameHurt;
+        if (!firstDownerNames[victimName]) firstDownerNames[victimName] = downerNameHurt;
+      }
     }
     if (victimName) currentStreaks[victimName] = 0;
 
@@ -431,6 +453,11 @@ EntityEvents.hurt(function(event) {
     if (victimName) {
       event.server.runCommandSilent('scoreboard players set ' + victimName + ' gun_downs ' + newDowns);
       recentlyDowned[victimName] = Date.now() + 15000;
+    }
+    // Down confirmation sound — played only to the downer.
+    if (downerNameHurt && downerNameHurt !== victimName) {
+      event.server.runCommandSilent('execute as ' + downerNameHurt + ' at @s run playsound minecraft:block.note_block.bass master @s ~ ~ ~ 1.5 1.0');
+      event.server.runCommandSilent('execute as ' + downerNameHurt + ' at @s run playsound minecraft:entity.hostile.big_fall master @s ~ ~ ~ 1.5 0.7');
     }
 
     if (currentDowns >= downsConfig.max_downs && victimName) {
@@ -474,11 +501,18 @@ EntityEvents.death(function(event) {
   writeTagNumber(dead.persistentData, PD_DOWNS, 0, true);
   event.server.runCommandSilent('scoreboard players set ' + deadName + ' gun_downs 0');
 
-  var entry      = getEntry(deadName);
-  if (typeof statsTrackingEnabled === 'undefined' || statsTrackingEnabled) entry.deaths += 1;
-  var deadRoundEntry = getRoundEntry(deadName);
-  deadRoundEntry.deaths = (deadRoundEntry.deaths || 0) + 1;
-  if (typeof statsTrackingEnabled === 'undefined' || statsTrackingEnabled) saveEntryToPlayer(dead);
+  if (typeof matchActive === 'undefined' || matchActive) {
+    var entry      = getEntry(deadName);
+    if (typeof statsTrackingEnabled === 'undefined' || statsTrackingEnabled) {
+      entry.deaths += 1;
+      var _dMode = (typeof currentModeId !== 'undefined') ? currentModeId : -1;
+      if (_dMode === 1) entry.tdm_deaths  = (entry.tdm_deaths  || 0) + 1;
+      else if (_dMode === 0) entry.elim_deaths = (entry.elim_deaths || 0) + 1;
+    }
+    var deadRoundEntry = getRoundEntry(deadName);
+    deadRoundEntry.deaths = (deadRoundEntry.deaths || 0) + 1;
+    if (typeof statsTrackingEnabled === 'undefined' || statsTrackingEnabled) saveEntryToPlayer(dead);
+  }
 
   // For bleed-outs the attacker cache has almost certainly expired (bleed timer is 60s,
   // cache TTL is 15s). Fall back to the stored downer as the kill credit.
@@ -491,14 +525,28 @@ EntityEvents.death(function(event) {
   delete firstDownerNames[deadName];
 
   if (!killerName || killerName === deadName) return;
+  if (!(typeof matchActive === 'undefined' || matchActive)) return;
 
   var killerPlayer = getOnlinePlayerByName(event.server, killerName);
   if (killerPlayer) loadEntryFromPlayer(killerPlayer);
 
   var killerEntry      = getEntry(killerName);
   var killerRoundEntry = getRoundEntry(killerName);
-  if (typeof statsTrackingEnabled === 'undefined' || statsTrackingEnabled) killerEntry.kills += 1;
+  if (typeof statsTrackingEnabled === 'undefined' || statsTrackingEnabled) {
+    killerEntry.kills += 1;
+    var _kMode = (typeof currentModeId !== 'undefined') ? currentModeId : -1;
+    if (_kMode === 1) killerEntry.tdm_kills  = (killerEntry.tdm_kills  || 0) + 1;
+    else if (_kMode === 0) killerEntry.elim_kills = (killerEntry.elim_kills || 0) + 1;
+  }
   killerRoundEntry.kills += 1;
+  event.server.runCommandSilent('scoreboard players add ' + killerName + ' life_kills 1');
+  // Kill confirmation sound — sharp high-pitched pling played only to the killer.
+  // Suppressed when a killstreak fires this same kill (streak replaces kill sound).
+  var _isStreakKill = streak >= 4 && streak % 4 === 0;
+  if (killerPlayer && !_isStreakKill) {
+    event.server.runCommandSilent('execute as ' + killerName + ' at @s run playsound minecraft:entity.horse.land master @s ~ ~ ~ 1.5 2');
+    event.server.runCommandSilent('execute as ' + killerName + ' at @s run playsound minecraft:entity.experience_orb.pickup master @s ~ ~ ~ 1.5 2');
+  }
 
   // First blood announcement (suppressed in tournament mode).
   if (!firstBloodDone && !(typeof tournamentMode !== 'undefined' && tournamentMode)) {
@@ -520,7 +568,16 @@ EntityEvents.death(function(event) {
   // Kill streak tracking.
   currentStreaks[killerName] = (currentStreaks[killerName] || 0) + 1;
   var streak = currentStreaks[killerName];
-  if ((typeof statsTrackingEnabled === 'undefined' || statsTrackingEnabled) && streak > (killerEntry.longest_streak || 0)) killerEntry.longest_streak = streak;
+  if ((typeof statsTrackingEnabled === 'undefined' || statsTrackingEnabled) && streak > (killerEntry.longest_streak || 0)) {
+    killerEntry.longest_streak = streak;
+    if (!killerEntry.session || killerEntry.session.date !== getTodayDateString()) killerEntry.session = makeDefaultSession();
+    if (streak > (killerEntry.session.longest_streak || 0)) killerEntry.session.longest_streak = streak;
+  }
+
+  // Killstreak sound — plays on reward milestones (multiples of 4), only for the killer.
+  if (killerPlayer && _isStreakKill) {
+    event.server.runCommandSilent('execute as ' + killerName + ' at @s run playsound minecraft:block.bell.use master @s ~ ~ ~ 1.5 1.5');
+  }
 
   // TDM kill streak rewards + announcements.
   var _isTdm = typeof currentModeId !== 'undefined' && currentModeId === 1;
@@ -530,15 +587,16 @@ EntityEvents.death(function(event) {
       '{"text":"' + killerName.replace(/"/g, '') + '","color":"' + _kColorStreak + '","bold":true},' +
       '{"text":" is on a ' + streak + '-kill streak!","color":"gold","bold":true}' +
     ']');
-    if      (streak === 4)  event.server.runCommandSilent('give ' + killerName + ' minecraft:golden_apple 3');
-    else if (streak === 8)  event.server.runCommandSilent('give ' + killerName + ' marbledsfirstaid:panacea_pills 1');
-    else if (streak === 12) event.server.runCommandSilent('give ' + killerName + ' marbledsfirstaid:morphine 1');
-    else if (streak === 16) event.server.runCommandSilent('give ' + killerName + ' marbledsfirstaid:panacea_pills 1');
+    if      (streak === 4)  killerPlayer.give(Item.of('minecraft:golden_apple', 3));
+    else if (streak === 8)  killerPlayer.give(Item.of('marbledsfirstaid:panacea_pills', 1));
+    else if (streak === 12) killerPlayer.give(Item.of('marbledsfirstaid:morphine', 1));
+    else if (streak === 16) killerPlayer.give(Item.of('marbledsfirstaid:panacea_pills', 1));
     else if (streak === 20) {
-      event.server.runCommandSilent('give ' + killerName + ' minecraft:golden_apple 3');
-      event.server.runCommandSilent('give ' + killerName + ' marbledsfirstaid:bandages 5');
+      killerPlayer.give(Item.of('minecraft:golden_apple', 3));
+      killerPlayer.give(Item.of('marbledsfirstaid:bandages', 5));
     }
-    else if (streak === 24) event.server.runCommandSilent('give ' + killerName + ' minecraft:enchanted_golden_apple 1');
+    else if (streak === 24) killerPlayer.give(Item.of('minecraft:enchanted_golden_apple', 1));
+    killerPlayer.give(Item.of('minecraft:golden_carrot', 4, '{display:{Name:\'{"text":"Golden Rations","italic":false}\'}}'));
   }
 
   if (typeof statsTrackingEnabled === 'undefined' || statsTrackingEnabled) {
@@ -565,7 +623,10 @@ EntityEvents.death(function(event) {
       if (_assistorPlayer) saveEntryToPlayer(_assistorPlayer);
     }
     if (_assistorPlayer) {
-      _assistorPlayer.tell('§7[§eAssist§7] You helped take down §c' + deadName + '§7, finished by §c' + killerName + '§7.');
+      var _assistorIsRed  = hasTagSafe(_assistorPlayer, 'Red');
+      var _deadColor      = _assistorIsRed ? '§b' : '§c'; // enemy = opposite team
+      var _finishColor    = _assistorIsRed ? '§c' : '§b'; // finisher = same team
+      _assistorPlayer.tell('§7[§eAssist§7] You helped take down ' + _deadColor + deadName + '§7, finished by ' + _finishColor + killerName + '§7.');
     }
   }
 });

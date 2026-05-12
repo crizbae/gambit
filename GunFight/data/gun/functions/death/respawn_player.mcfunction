@@ -11,4 +11,6 @@ execute at @s run playsound minecraft:block.respawn_anchor.set_spawn master @s ~
 
 scoreboard players set @s gun_downs 0
 scoreboard players set @s tdm_respawn_timer 0
+execute if score #mode mode_respawns matches 1 run scoreboard players set @s life_kills 0
+execute if score #mode mode_respawns matches 1 run scoreboard players set @s life_dmg 0
 tag @s remove gun_dead

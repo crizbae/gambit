@@ -1,6 +1,6 @@
 execute as @a[tag=gun_just_died,gamemode=!creative,gamemode=!spectator] run gamemode spectator @s
 execute as @a[tag=gun_just_died] run tag @s add gun_spec_tp_pending
-execute as @a[tag=gun_just_died] run scoreboard players set @s spec_respawn_timer 3
+execute as @a[tag=gun_just_died] run scoreboard players set @s spec_respawn_timer 4
 execute as @a[tag=gun_just_died] run tag @s remove gun_just_died
 
 execute as @a[tag=gun_spec_tp_pending,scores={spec_respawn_timer=1..}] run scoreboard players remove @s spec_respawn_timer 1

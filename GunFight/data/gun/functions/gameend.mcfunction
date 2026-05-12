@@ -25,6 +25,7 @@ team join lobby @a[team=red]
 team join lobby @a[team=blue]
 schedule clear gun:tdm/spawnpoints
 spawnpoint @a 0 0 0
+schedule clear gun:selectors/loop
 schedule function gun:selectors/loop 1t
 time set 6000
 gambit_match_end

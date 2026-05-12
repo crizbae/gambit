@@ -1,5 +1,7 @@
-scoreboard players operation Red tdm_kills = #Red tdm_red_kills
-scoreboard players operation Blue tdm_kills = #Blue tdm_blue_kills
+bossbar set gun:tdm_red name [{"text":"● Red  ","color":"red"},{"score":{"name":"#Red","objective":"tdm_red_kills"},"color":"white"},{"text":" / ","color":"gray"},{"score":{"name":"#target","objective":"tdm_kill_target"},"color":"white"}]
+execute store result bossbar gun:tdm_red value run scoreboard players get #Red tdm_red_kills
+bossbar set gun:tdm_blue name [{"text":"● Blue  ","color":"aqua"},{"score":{"name":"#Blue","objective":"tdm_blue_kills"},"color":"white"},{"text":" / ","color":"gray"},{"score":{"name":"#target","objective":"tdm_kill_target"},"color":"white"}]
+execute store result bossbar gun:tdm_blue value run scoreboard players get #Blue tdm_blue_kills
 scoreboard players operation #RedLeft tdm_ui = #target tdm_kill_target
 scoreboard players operation #RedLeft tdm_ui -= #Red tdm_red_kills
 execute if score #RedLeft tdm_ui matches ..-1 run scoreboard players set #RedLeft tdm_ui 0

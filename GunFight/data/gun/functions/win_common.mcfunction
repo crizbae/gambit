@@ -1,4 +1,4 @@
 function gun:stats/match_all
-gambitstats postgame
+stats postgame
 function gun:pleft/close
 schedule function gun:gameend 5s

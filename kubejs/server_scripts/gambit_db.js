@@ -6,18 +6,68 @@ var _gambitDb = {
   config: null,
   connection: null,
   enabled: false,
-  driverLoaded: false
+  driverLoaded: false,
+  driverInstance: null  // set when loaded via URLClassLoader fallback
 };
 
+// Try to find the MySQL connector JAR under libraries/com/mysql/mysql-connector-j/
+// Returns the File object if found, null otherwise.
+function _gambitFindDriverJar() {
+  try {
+    var File = Java.loadClass('java.io.File');
+    var root = new File('libraries/com/mysql/mysql-connector-j');
+    if (!root.isDirectory()) return null;
+    var versions = root.listFiles();
+    if (!versions) return null;
+    for (var vi = 0; vi < versions.length; vi++) {
+      if (!versions[vi].isDirectory()) continue;
+      var jars = versions[vi].listFiles();
+      if (!jars) continue;
+      for (var ji = 0; ji < jars.length; ji++) {
+        var n = jars[ji].getName();
+        if (n.indexOf('mysql-connector') !== -1 && n.lastIndexOf('.jar') === n.length - 4) {
+          return jars[ji];
+        }
+      }
+    }
+  } catch (e) {}
+  return null;
+}
+
 (function() {
+  // 1. Try normal class lookup (works if JAR is on the mod classloader).
   try {
     Java.loadClass('com.mysql.cj.jdbc.Driver');
     _gambitDb.driverLoaded = true;
-  } catch (e) {
+    return;
+  } catch (e) {}
+  try {
+    Java.loadClass('com.mysql.jdbc.Driver');
+    _gambitDb.driverLoaded = true;
+    return;
+  } catch (e) {}
+
+  // 2. Fallback: load the JAR directly via URLClassLoader.
+  try {
+    var jarFile = _gambitFindDriverJar();
+    if (!jarFile) {
+      console.warn('[Gambit DB] MySQL driver JAR not found under libraries/com/mysql/mysql-connector-j/.');
+      return;
+    }
+    var URLClassLoader = Java.loadClass('java.net.URLClassLoader');
+    var parentLoader = Java.loadClass('java.lang.Object').class.getClassLoader();
+    var ucl = new URLClassLoader([jarFile.toURI().toURL()], parentLoader);
+    var driverClass;
     try {
-      Java.loadClass('com.mysql.jdbc.Driver');
-      _gambitDb.driverLoaded = true;
-    } catch (e2) {}
+      driverClass = ucl.loadClass('com.mysql.cj.jdbc.Driver');
+    } catch (e) {
+      driverClass = ucl.loadClass('com.mysql.jdbc.Driver');
+    }
+    _gambitDb.driverInstance = driverClass.getDeclaredConstructor().newInstance();
+    _gambitDb.driverLoaded = true;
+    console.info('[Gambit DB] MySQL driver loaded via URLClassLoader from ' + jarFile.getPath());
+  } catch (e) {
+    console.warn('[Gambit DB] URLClassLoader driver load failed: ' + e);
   }
 })();
 
@@ -27,7 +77,7 @@ function gambitDbLoadConfig() {
     if (raw && raw.enabled) {
       if (!_gambitDb.driverLoaded) {
         console.warn('[Gambit DB] MySQL is enabled in config but the JDBC driver was not found.');
-        console.warn('[Gambit DB] Place mysql-connector-j-*.jar on the server classpath and restart.');
+        console.warn('[Gambit DB] Place mysql-connector-j-*.jar under libraries/com/mysql/mysql-connector-j/<version>/ and restart.');
         _gambitDb.enabled = false;
         return false;
       }
@@ -55,13 +105,25 @@ function gambitDbConnect() {
     if (_gambitDb.connection && !_gambitDb.connection.isClosed()) return true;
   } catch (e) {}
 
+  var cfg = _gambitDb.config;
+  var url = 'jdbc:mysql://' + cfg.host + ':' + cfg.port + '/' + cfg.database
+    + '?useSSL=false&allowPublicKeyRetrieval=true&autoReconnect=true'
+    + '&connectTimeout=5000&socketTimeout=10000&serverTimezone=UTC';
+
   try {
-    var DriverManager = Java.loadClass('java.sql.DriverManager');
-    var cfg = _gambitDb.config;
-    var url = 'jdbc:mysql://' + cfg.host + ':' + cfg.port + '/' + cfg.database
-      + '?useSSL=false&allowPublicKeyRetrieval=true&autoReconnect=true'
-      + '&connectTimeout=5000&socketTimeout=10000&serverTimezone=UTC';
-    _gambitDb.connection = DriverManager.getConnection(url, cfg.username, cfg.password);
+    if (_gambitDb.driverInstance) {
+      // Driver was loaded via URLClassLoader — connect through the driver instance directly
+      // because DriverManager won't see a driver loaded by a child classloader.
+      var Properties = Java.loadClass('java.util.Properties');
+      var props = new Properties();
+      props.setProperty('user', cfg.username);
+      props.setProperty('password', cfg.password);
+      _gambitDb.connection = _gambitDb.driverInstance.connect(url, props);
+      if (!_gambitDb.connection) throw new Error('driver.connect() returned null — URL not accepted');
+    } else {
+      var DriverManager = Java.loadClass('java.sql.DriverManager');
+      _gambitDb.connection = DriverManager.getConnection(url, cfg.username, cfg.password);
+    }
     console.info('[Gambit DB] Connected to MySQL at ' + cfg.host + ':' + cfg.port + '/' + cfg.database);
     return true;
   } catch (e) {
@@ -83,7 +145,12 @@ function gambitDbDisconnect() {
 
 function gambitDbIsConnected() {
   if (!_gambitDb.connection) return false;
-  try { return !_gambitDb.connection.isClosed(); } catch (e) { return false; }
+  try {
+    if (_gambitDb.connection.isClosed()) return false;
+    // isValid() actually pings the server; catches silently-dropped TCP connections
+    // that isClosed() alone cannot detect (e.g. MySQL wait_timeout expiry).
+    return _gambitDb.connection.isValid(2);
+  } catch (e) { return false; }
 }
 
 function gambitDbGetConnection() {

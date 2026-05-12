@@ -100,6 +100,18 @@ ServerEvents.loaded(function(event) {
   event.server.runCommandSilent('bossbar set gun:nextmap visible false');
   event.server.runCommandSilent('bossbar set gun:nextmap max 1');
   event.server.runCommandSilent('bossbar set gun:nextmap value 1');
+  event.server.runCommandSilent('bossbar add gun:tdm_red {"text":""}');
+  event.server.runCommandSilent('bossbar set gun:tdm_red color red');
+  event.server.runCommandSilent('bossbar set gun:tdm_red visible false');
+  event.server.runCommandSilent('bossbar add gun:tdm_blue {"text":""}');
+  event.server.runCommandSilent('bossbar set gun:tdm_blue color blue');
+  event.server.runCommandSilent('bossbar set gun:tdm_blue visible false');
+  event.server.runCommandSilent('bossbar add gun:elim_red {"text":""}');
+  event.server.runCommandSilent('bossbar set gun:elim_red color red');
+  event.server.runCommandSilent('bossbar set gun:elim_red visible false');
+  event.server.runCommandSilent('bossbar add gun:elim_blue {"text":""}');
+  event.server.runCommandSilent('bossbar set gun:elim_blue color blue');
+  event.server.runCommandSilent('bossbar set gun:elim_blue visible false');
 
   // Match scoreboards — created once at server load, reset between matches
   event.server.runCommandSilent('scoreboard objectives add rcount dummy');
@@ -112,7 +124,8 @@ ServerEvents.loaded(function(event) {
   event.server.runCommandSilent('scoreboard objectives add tdm_blue_kills dummy');
   event.server.runCommandSilent('scoreboard objectives add tdm_respawn_timer dummy');
   event.server.runCommandSilent('scoreboard objectives add spec_respawn_timer dummy');
-  event.server.runCommandSilent('scoreboard objectives add tdm_kills dummy "TDM Kills"');
+  event.server.runCommandSilent('scoreboard objectives add tdm_kills dummy {"text":"◄ TDM ►","color":"gold","bold":true}');
+  event.server.runCommandSilent('scoreboard objectives modify tdm_kills displayname {"text":"◄ TDM ►","color":"gold","bold":true}');
   event.server.runCommandSilent('scoreboard objectives add tdm_deaths_counted dummy');
   event.server.runCommandSilent('scoreboard objectives add gun_deaths deathCount');
   event.server.runCommandSilent('scoreboard objectives add gun_deaths_prev dummy');
@@ -121,6 +134,9 @@ ServerEvents.loaded(function(event) {
   event.server.runCommandSilent('scoreboard objectives add ration_roll dummy');
   event.server.runCommandSilent('scoreboard objectives add pleft_ui_timer dummy');
   event.server.runCommandSilent('scoreboard objectives add tdm_ui dummy');
+  event.server.runCommandSilent('scoreboard objectives add life_kills dummy');
+  event.server.runCommandSilent('scoreboard objectives add life_dmg dummy');
+  event.server.runCommandSilent('scoreboard objectives add pleft_sidebar dummy "Players Left"');
 
   // Ensure teams exist and lobby loop is running
   event.server.runCommandSilent('function gun:teams/build');
@@ -143,6 +159,7 @@ ServerEvents.commandRegistry(function(event) {
 
   event.register(
     Commands.literal('spectate')
+      .requires(function(src) { return src.hasPermission(0); })
       .executes(function(ctx) {
         var player = ctx.source.player;
         if (!player || !player.tell) return 1;
@@ -173,6 +190,7 @@ ServerEvents.commandRegistry(function(event) {
 
   event.register(
     Commands.literal('play')
+      .requires(function(src) { return src.hasPermission(0); })
       .executes(function(ctx) {
         var player = ctx.source.player;
         if (!player || !player.tell) return 1;
