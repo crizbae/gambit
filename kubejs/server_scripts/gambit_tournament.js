@@ -243,7 +243,7 @@ ServerEvents.commandRegistry(function(event) {
         // Players who voluntarily spectated before the tournament will also be cleared,
         // but that is acceptable — they can /spectate again if needed.
         ctx.source.server.runCommandSilent('tag @a remove gun_optout');
-        ctx.source.server.runCommandSilent('execute as @a[gamemode=spectator,tag=!gun_optout] in minecraft:overworld run tp @s 0 0 0');
+        ctx.source.server.runCommandSilent('execute as @a[gamemode=spectator,tag=!gun_optout] in minecraft:overworld run tp @s 0 101 0');
         ctx.source.server.runCommandSilent('gamemode adventure @a[gamemode=spectator,tag=!gun_optout]');
         ctx.source.server.runCommandSilent(
           'tellraw @a ["",{"text":"[Gambit] ","color":"gray"},{"text":"Tournament mode disabled. Rosters cleared. All players returned to queue.","color":"yellow"}]'

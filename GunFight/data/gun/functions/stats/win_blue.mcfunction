@@ -1,1 +1,1 @@
-stats addwin blue
+stats admin addwin blue

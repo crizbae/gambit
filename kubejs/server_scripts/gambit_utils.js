@@ -104,13 +104,13 @@ ServerEvents.loaded(function(event) {
   event.server.runCommandSilent('bossbar set gun:tdm_red color red');
   event.server.runCommandSilent('bossbar set gun:tdm_red visible false');
   event.server.runCommandSilent('bossbar add gun:tdm_blue {"text":""}');
-  event.server.runCommandSilent('bossbar set gun:tdm_blue color blue');
+  event.server.runCommandSilent('bossbar set gun:tdm_blue color white');
   event.server.runCommandSilent('bossbar set gun:tdm_blue visible false');
   event.server.runCommandSilent('bossbar add gun:elim_red {"text":""}');
   event.server.runCommandSilent('bossbar set gun:elim_red color red');
   event.server.runCommandSilent('bossbar set gun:elim_red visible false');
   event.server.runCommandSilent('bossbar add gun:elim_blue {"text":""}');
-  event.server.runCommandSilent('bossbar set gun:elim_blue color blue');
+  event.server.runCommandSilent('bossbar set gun:elim_blue color white');
   event.server.runCommandSilent('bossbar set gun:elim_blue visible false');
 
   // Match scoreboards — created once at server load, reset between matches
@@ -137,6 +137,7 @@ ServerEvents.loaded(function(event) {
   event.server.runCommandSilent('scoreboard objectives add life_kills dummy');
   event.server.runCommandSilent('scoreboard objectives add life_dmg dummy');
   event.server.runCommandSilent('scoreboard objectives add pleft_sidebar dummy "Players Left"');
+  event.server.runCommandSilent('scoreboard objectives add sumo_grace dummy');
 
   // Ensure teams exist and lobby loop is running
   event.server.runCommandSilent('function gun:teams/build');
@@ -149,7 +150,7 @@ ServerEvents.loaded(function(event) {
   event.server.runCommandSilent('gamerule reducedDebugInfo true');
   event.server.runCommandSilent('gamerule announceAdvancements false');
   event.server.runCommandSilent('gamerule doDaylightCycle false');
-  event.server.runCommandSilent('time set 6000');
+  event.server.runCommandSilent('time set 18000');
   event.server.runCommandSilent('gamerule doWeatherCycle false');
   event.server.runCommandSilent('weather clear');
 });

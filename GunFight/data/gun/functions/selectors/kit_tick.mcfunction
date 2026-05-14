@@ -10,3 +10,4 @@ execute as @a[tag=!sniper,gamemode=adventure] at @s if block ~ ~-1 ~ purple_stai
 execute as @a[tag=!ranger,gamemode=adventure] at @s if block ~ ~-1 ~ lime_stained_glass if block ~ ~-2 ~ verdant_froglight if block ~ ~-3 ~ dried_kelp_block run function gun:selectors/ranger
 execute as @a[tag=!burst,gamemode=adventure] at @s if block ~ ~-1 ~ yellow_stained_glass if block ~ ~-2 ~ glowstone if block ~ ~-3 ~ dried_kelp_block run function gun:selectors/burst
 execute as @a[tag=!sentry,gamemode=adventure] at @s if block ~ ~-1 ~ pink_stained_glass if block ~ ~-2 ~ pink_glazed_terracotta if block ~ ~-3 ~ dried_kelp_block run function gun:selectors/sentry
+execute as @a[tag=!covert,gamemode=adventure] at @s if block ~ ~-1 ~ brown_stained_glass if block ~ ~-2 ~ ochre_froglight if block ~ ~-3 ~ dried_kelp_block run function gun:selectors/covert

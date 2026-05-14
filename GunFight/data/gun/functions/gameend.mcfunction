@@ -1,12 +1,16 @@
+bossbar set gun:tdm_red visible false
+bossbar set gun:tdm_blue visible false
+bossbar set gun:elim_red visible false
+bossbar set gun:elim_blue visible false
 revive @a
 # Force any players still in spectator (waiting to respawn mid-TDM) back to adventure
 # before the TP so they land correctly rather than staying stuck as spectators.
 gamemode adventure @a[tag=gun_dead,gamemode=spectator]
 scoreboard players set @a tdm_respawn_timer 0
-tp @a[tag=Red] -7.84 0.00 0.52 -1529.49 1.46
-tp @a[tag=Blue] 6.74 0.00 0.54 -1349.64 2.36
+tp @a[tag=Red] 0 101 0
+tp @a[tag=Blue] 0 101 0
 gamerule doImmediateRespawn false
-execute as @a[gamemode=spectator] run execute in minecraft:overworld run tp @s 0.43 0.00 0.43 -1260.08 3.15
+execute as @a[gamemode=spectator] run execute in minecraft:overworld run tp @s 0 101 0
 execute at @a[gamemode=spectator] as @a[gamemode=spectator] run gamemode adventure
 tag @a remove gun_dead
 tag @a remove gun_just_died
@@ -24,8 +28,8 @@ effect give @a saturation 1800 0 true
 team join lobby @a[team=red]
 team join lobby @a[team=blue]
 schedule clear gun:tdm/spawnpoints
-spawnpoint @a 0 0 0
+spawnpoint @a 0 101 0
 schedule clear gun:selectors/loop
 schedule function gun:selectors/loop 1t
-time set 6000
+time set 18000
 gambit_match_end

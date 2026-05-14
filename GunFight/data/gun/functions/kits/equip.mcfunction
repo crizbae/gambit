@@ -6,3 +6,4 @@ execute as @a[tag=sniper,gamemode=!creative,gamemode=!spectator] run function gu
 execute as @a[tag=ranger,gamemode=!creative,gamemode=!spectator] run function gun:kits/single/ranger
 execute as @a[tag=burst,gamemode=!creative,gamemode=!spectator] run function gun:kits/single/burst
 execute as @a[tag=sentry,gamemode=!creative,gamemode=!spectator] run function gun:kits/single/sentry
+execute as @a[tag=covert,gamemode=!creative,gamemode=!spectator] run function gun:kits/single/covert

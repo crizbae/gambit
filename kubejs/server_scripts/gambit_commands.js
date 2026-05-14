@@ -70,12 +70,13 @@ function showCombinedGlobal(player) {
   var sorted = getSortedEntries();
   var limit  = Math.min(10, sorted.length);
   player.tell('§6§l── Combined Leaderboard (Global) ──');
+  player.tell('§7Score = avg of Elim and TDM score/match');
   if (limit === 0) {
     player.tell('§7No players with ' + LEADERBOARD_MIN_MATCHES_MODE + '+ elim and ' + LEADERBOARD_MIN_MATCHES_MODE + '+ TDM matches yet.');
   } else {
     for (var i = 0; i < limit; i++) {
       var e = sorted[i][1];
-      player.tell('§7' + (i + 1) + '. §e' + sorted[i][0] + '§r — §bKD: §f' + getCombinedKD(e).toFixed(2) + '§r | §aDPL: §f' + getAvgDamagePerLife(e).toFixed(1));
+      player.tell('§7' + (i + 1) + '. §e' + sorted[i][0] + '§r — §2Score: §f' + getCombinedAvgScore(e).toFixed(0) + ' §8| §bKD: §f' + getCombinedKD(e).toFixed(2));
     }
   }
   player.tell('§6§l──────────────────────────');
@@ -122,24 +123,21 @@ function showSessionLeaderboard(player, mode) {
   if (mode === 'Elim') {
     sorted     = getSortedEntriesBySessionElimScore();
     scoreLabel = 'Elim Score';
-    scoreFn    = function(s) { return ((0.5*(s.damage||0))+(100*(s.kills||0))+(50*(s.assists||0))+(300*(s.mvps||0)))/(s.matches||1); };
+    scoreFn    = function(s) { return _sessionElimScore(s); };
     kdFn       = function(s) { return (s.elim_kills||0) / Math.max(1, s.elim_deaths||0); };
   } else if (mode === 'TDM') {
     sorted     = getSortedEntriesBySessionTdmScore();
     scoreLabel = 'TDM Score';
-    scoreFn    = function(s) { return ((0.25*(s.damage||0))+(100*(s.kills||0))+(50*(s.assists||0))-(100*(s.deaths||0))+(500*(s.mvps||0)))/(s.matches||1); };
+    scoreFn    = function(s) { return _sessionTdmScore(s); };
     kdFn       = function(s) { return (s.tdm_kills||0) / Math.max(1, s.tdm_deaths||0); };
   } else {
     sorted     = getSortedEntriesBySessionCombinedScore();
     scoreLabel = 'Combined Score';
-    scoreFn    = function(s) {
-      var e = ((0.5*(s.damage||0))+(100*(s.kills||0))+(50*(s.assists||0))+(300*(s.mvps||0)))/(s.matches||1);
-      var t = ((0.25*(s.damage||0))+(100*(s.kills||0))+(50*(s.assists||0))-(100*(s.deaths||0))+(500*(s.mvps||0)))/(s.matches||1);
-      return (e + t) / 2;
-    };
+    scoreFn    = function(s) { return _sessionCombinedScore(s); };
     kdFn = function(s) {
       var k = (s.elim_kills||0) + (s.tdm_kills||0);
       var d = (s.elim_deaths||0) + (s.tdm_deaths||0);
+      if (k === 0 && d === 0) return (s.deaths > 0 ? s.kills / s.deaths : (s.kills || 0)); // legacy fallback
       return k / Math.max(1, d);
     };
   }
@@ -185,6 +183,7 @@ ServerEvents.commandRegistry(function(event) {
         player.tell('§e/stats combined global §7— all-time combined leaderboard');
         player.tell('§e/stats combined session §7— today\'s combined leaderboard');
         player.tell('§7Metrics: §fkd, winpct, kills, deaths, damage, wins, matches, mvps, dpl, assists, streak, revives');
+        player.tell('§c/stats admin §7— OP management commands');
         return 1;
       })
 
@@ -302,46 +301,20 @@ ServerEvents.commandRegistry(function(event) {
           )
       )
 
-      // /stats postgame
+      // /stats postgame (server-only, hidden from autocomplete)
       .then(
         Commands.literal('postgame')
-          .requires(function(src) { return src.hasPermission(2); })
+          .requires(function(src) { return !src.player; })
           .executes(function(ctx) {
             broadcastPostGameScoreboard(ctx.source.server);
             return 1;
           })
       )
 
-      // /stats tracking on|off
-      .then(
-        Commands.literal('tracking')
-          .requires(function(src) { return src.hasPermission(2); })
-          .then(
-            Commands.literal('on')
-              .executes(function(ctx) {
-                statsTrackingEnabled = true;
-                ctx.source.server.runCommandSilent(
-                  'tellraw @a ["",{"text":"[Gambit] ","color":"gray"},{"text":"Stat tracking enabled.","color":"green"}]'
-                );
-                return 1;
-              })
-          )
-          .then(
-            Commands.literal('off')
-              .executes(function(ctx) {
-                statsTrackingEnabled = false;
-                ctx.source.server.runCommandSilent(
-                  'tellraw @a ["",{"text":"[Gambit] ","color":"gray"},{"text":"Stat tracking disabled.","color":"red"}]'
-                );
-                return 1;
-              })
-          )
-      )
-
-      // /stats addmatch <playerName|red|blue|all>
+      // /stats addmatch (server-only, hidden from autocomplete)
       .then(
         Commands.literal('addmatch')
-          .requires(function(src) { return src.hasPermission(2); })
+          .requires(function(src) { return !src.player; })
           .then(
             Commands.argument('playerName', StringArgumentType.word())
               .suggests(suggestTeamTargets)
@@ -353,27 +326,6 @@ ServerEvents.commandRegistry(function(event) {
                 if (caller && caller.tell) {
                   if (result.mode === 'player') { caller.tell('§a[Gambit Stats] Added match for ' + result.playerName + '. Matches: ' + result.entry.matches + ', W%: ' + getWinPct(result.entry).toFixed(1) + '%.'); }
                   else { caller.tell('§a[Gambit Stats] Added match for ' + result.count + ' player(s) in target "' + result.mode + '".'); }
-                }
-                return 1;
-              })
-          )
-      )
-
-      // /stats addwin <playerName|red|blue|all>
-      .then(
-        Commands.literal('addwin')
-          .requires(function(src) { return src.hasPermission(2); })
-          .then(
-            Commands.argument('playerName', StringArgumentType.word())
-              .suggests(suggestTeamTargets)
-              .executes(function(ctx) {
-                var target = StringArgumentType.getString(ctx, 'playerName');
-                var caller = ctx.source.player;
-                var result = applyMatchResult(ctx.source.server, target, false, true);
-                if (result.count <= 0) { if (caller && caller.tell) caller.tell('§c[Gambit Stats] No valid online target for addwin: "' + target + '".'); return 1; }
-                if (caller && caller.tell) {
-                  if (result.mode === 'player') { caller.tell('§a[Gambit Stats] Added win for ' + result.playerName + '. Wins: ' + result.entry.wins + ', Matches: ' + result.entry.matches + ', W%: ' + getWinPct(result.entry).toFixed(1) + '%.'); }
-                  else { caller.tell('§a[Gambit Stats] Added wins for ' + result.count + ' player(s) in target "' + result.mode + '".'); }
                 }
                 return 1;
               })
@@ -449,60 +401,120 @@ ServerEvents.commandRegistry(function(event) {
           )
       )
 
-      // /stats reset all / reset <playerName>
+      // /stats admin — OP management commands
       .then(
-        Commands.literal('reset')
+        Commands.literal('admin')
           .requires(function(src) { return src.hasPermission(2); })
-          .then(
-            Commands.literal('all')
-              .executes(function(ctx) {
-                var player    = ctx.source.player;
-                var actorName = player && player.name && player.name.string ? player.name.string : 'Server Console';
-                var count     = statsSize();
-                var keys      = Object.keys(stats);
-                for (var i = 0; i < keys.length; i++) stats[keys[i]] = makeDefaultEntry();
-                ctx.source.server.players.forEach(function(p) { clearEntryForPlayer(p); });
-                saveStatsToDisk();
-                gambitDbResetAll();
-                updateBillboard(ctx.source.server);
-                if (player && player.tell) player.tell('§a[Gambit Stats] Cleared stats for ' + count + ' player(s).');
-                ctx.source.server.players.forEach(function(p) {
-                  if (!player || p.uuid !== player.uuid) p.tell('§a[Gambit Stats] Round stats have been reset by ' + actorName + '.');
-                });
-                return 1;
-              })
-          )
-          .then(
-            Commands.argument('playerName', StringArgumentType.word())
-              .suggests(suggestPlayers)
-              .executes(function(ctx) {
-                var caller      = ctx.source.player;
-                var targetInput = StringArgumentType.getString(ctx, 'playerName');
-                var targetPlayer = getOnlinePlayerByName(ctx.source.server, targetInput);
-                if (targetPlayer) {
-                  clearEntryForPlayer(targetPlayer);
-                  saveStatsToDisk();
-                  gambitDbResetPlayer(targetPlayer.name.string);
-                  if (caller && caller.tell) {
-                    caller.tell('§a[Gambit Stats] Reset stats for ' + targetPlayer.name.string + '.');
-                    if (caller.uuid !== targetPlayer.uuid) targetPlayer.tell('§a[Gambit Stats] Your stats were reset by ' + caller.name.string + '.');
-                  }
-                  return 1;
-                }
-                var resolvedName = getExistingStatName(targetInput);
-                if (!resolvedName) { if (caller && caller.tell) caller.tell('§c[Gambit Stats] No stats found for "' + targetInput + '".'); return 1; }
-                stats[resolvedName] = makeDefaultEntry();
-                saveStatsToDisk();
-                gambitDbResetPlayer(resolvedName);
-                if (caller && caller.tell) caller.tell('§a[Gambit Stats] Reset stats for ' + resolvedName + ' (offline).');
-                return 1;
-              })
-          )
           .executes(function(ctx) {
             var caller = ctx.source.player;
-            if (caller && caller.tell) caller.tell('§e[Gambit Stats] Specify a target: §f/stats reset all §eor §f/stats reset <playerName>');
+            if (caller && caller.tell) {
+              caller.tell('§6§l── Gambit Stats Admin ──');
+              caller.tell('§e/stats admin tracking on|off');
+              caller.tell('§e/stats admin addwin <player|red|blue|all>');
+              caller.tell('§e/stats admin reset all|<player>');
+            }
             return 1;
           })
+
+          // /stats admin tracking on|off
+          .then(
+            Commands.literal('tracking')
+              .then(
+                Commands.literal('on')
+                  .executes(function(ctx) {
+                    statsTrackingEnabled = true;
+                    ctx.source.server.runCommandSilent(
+                      'tellraw @a ["",{"text":"[Gambit] ","color":"gray"},{"text":"Stat tracking enabled.","color":"green"}]'
+                    );
+                    return 1;
+                  })
+              )
+              .then(
+                Commands.literal('off')
+                  .executes(function(ctx) {
+                    statsTrackingEnabled = false;
+                    ctx.source.server.runCommandSilent(
+                      'tellraw @a ["",{"text":"[Gambit] ","color":"gray"},{"text":"Stat tracking disabled.","color":"red"}]'
+                    );
+                    return 1;
+                  })
+              )
+          )
+
+          // /stats admin addwin <playerName|red|blue|all>
+          .then(
+            Commands.literal('addwin')
+              .then(
+                Commands.argument('playerName', StringArgumentType.word())
+                  .suggests(suggestTeamTargets)
+                  .executes(function(ctx) {
+                    var target = StringArgumentType.getString(ctx, 'playerName');
+                    var caller = ctx.source.player;
+                    var result = applyMatchResult(ctx.source.server, target, false, true);
+                    if (result.count <= 0) { if (caller && caller.tell) caller.tell('§c[Gambit Stats] No valid online target for addwin: "' + target + '".'); return 1; }
+                    if (caller && caller.tell) {
+                      if (result.mode === 'player') { caller.tell('§a[Gambit Stats] Added win for ' + result.playerName + '. Wins: ' + result.entry.wins + ', Matches: ' + result.entry.matches + ', W%: ' + getWinPct(result.entry).toFixed(1) + '%.'); }
+                      else { caller.tell('§a[Gambit Stats] Added wins for ' + result.count + ' player(s) in target "' + result.mode + '".'); }
+                    }
+                    return 1;
+                  })
+              )
+          )
+
+          // /stats admin reset all / reset <playerName>
+          .then(
+            Commands.literal('reset')
+              .then(
+                Commands.literal('all')
+                  .executes(function(ctx) {
+                    var player    = ctx.source.player;
+                    var actorName = player && player.name && player.name.string ? player.name.string : 'Server Console';
+                    var count     = statsSize();
+                    var keys      = Object.keys(stats);
+                    for (var i = 0; i < keys.length; i++) stats[keys[i]] = makeDefaultEntry();
+                    ctx.source.server.players.forEach(function(p) { clearEntryForPlayer(p); });
+                    saveStatsToDisk();
+                    gambitDbResetAll();
+                    updateBillboard(ctx.source.server);
+                    if (player && player.tell) player.tell('§a[Gambit Stats] Cleared stats for ' + count + ' player(s).');
+                    ctx.source.server.players.forEach(function(p) {
+                      if (!player || p.uuid !== player.uuid) p.tell('§a[Gambit Stats] Round stats have been reset by ' + actorName + '.');
+                    });
+                    return 1;
+                  })
+              )
+              .then(
+                Commands.argument('playerName', StringArgumentType.word())
+                  .suggests(suggestPlayers)
+                  .executes(function(ctx) {
+                    var caller      = ctx.source.player;
+                    var targetInput = StringArgumentType.getString(ctx, 'playerName');
+                    var targetPlayer = getOnlinePlayerByName(ctx.source.server, targetInput);
+                    if (targetPlayer) {
+                      clearEntryForPlayer(targetPlayer);
+                      saveStatsToDisk();
+                      gambitDbResetPlayer(targetPlayer.name.string);
+                      if (caller && caller.tell) {
+                        caller.tell('§a[Gambit Stats] Reset stats for ' + targetPlayer.name.string + '.');
+                        if (caller.uuid !== targetPlayer.uuid) targetPlayer.tell('§a[Gambit Stats] Your stats were reset by ' + caller.name.string + '.');
+                      }
+                      return 1;
+                    }
+                    var resolvedName = getExistingStatName(targetInput);
+                    if (!resolvedName) { if (caller && caller.tell) caller.tell('§c[Gambit Stats] No stats found for "' + targetInput + '".'); return 1; }
+                    stats[resolvedName] = makeDefaultEntry();
+                    saveStatsToDisk();
+                    gambitDbResetPlayer(resolvedName);
+                    if (caller && caller.tell) caller.tell('§a[Gambit Stats] Reset stats for ' + resolvedName + ' (offline).');
+                    return 1;
+                  })
+              )
+              .executes(function(ctx) {
+                var caller = ctx.source.player;
+                if (caller && caller.tell) caller.tell('§e[Gambit Stats] Specify a target: §f/stats admin reset all §eor §f/stats admin reset <playerName>');
+                return 1;
+              })
+          )
       )
   );
 
@@ -571,9 +583,39 @@ ServerEvents.commandRegistry(function(event) {
   );
 
   // ── /gambitboard ──────────────────────────────────────────
-  function setupBillboard(ctx, mode) {
-    var player     = ctx.source.player;
+  // Lookup table avoids Rhino Java-backed Double issues with Math.sin/cos.
+  // Yaw is always snapped to 45° increments before calling this.
+  var QUAT_TABLE = {
+    '0':   '0f,0f,0f,1f',
+    '45':  '0f,-0.38268f,0f,0.92388f',
+    '90':  '0f,-0.70711f,0f,0.70711f',
+    '135': '0f,-0.92388f,0f,0.38268f',
+    '180': '0f,-1f,0f,0f',
+    '225': '0f,-0.92388f,0f,-0.38268f',
+    '270': '0f,-0.70711f,0f,-0.70711f',
+    '315': '0f,-0.38268f,0f,-0.92388f'
+  };
+  function yawToQuaternion(yawDeg) {
+    if (typeof yawDeg !== 'number' || isNaN(yawDeg)) yawDeg = 0;
+    var snapped = String((((Math.round(yawDeg / 45) * 45) % 360) + 360) % 360);
+    return QUAT_TABLE[snapped] || '0f,0f,0f,1f';
+  }
+
+  function yawToCompass(yaw) {
+    var dirs = ['S','SW','W','NW','N','NE','E','SE'];
+    return dirs[((Math.round(((yaw % 360) + 360) % 360 / 45)) % 8)];
+  }
+
+  function setupBillboard(ctx, mode, yawDeg) {
+    var player = ctx.source.player;
     if (!player || !player.tell) return 1;
+    if (typeof yawDeg !== 'number' || isNaN(yawDeg)) {
+      try {
+        var _rawYaw = typeof player.getYRot === 'function' ? player.getYRot() : player.yRot;
+        yawDeg = (((Math.round(parseFloat(_rawYaw) / 45) * 45) % 360) + 360) % 360;
+      } catch(_yroe) {}
+      if (typeof yawDeg !== 'number' || isNaN(yawDeg)) yawDeg = 0;
+    }
     var playerName = player.name && player.name.string ? player.name.string : null;
     if (!playerName) return 1;
     var x = Math.floor(player.x);
@@ -581,16 +623,16 @@ ServerEvents.commandRegistry(function(event) {
     var z = Math.floor(player.z);
     var tag = BILLBOARD_TAGS[mode];
     ctx.source.server.runCommandSilent('execute in minecraft:overworld run kill @e[type=minecraft:text_display,tag=' + tag + ']');
-    billboardPositions[mode] = { x: x, y: y, z: z };
+    billboardPositions[mode] = { x: x, y: y, z: z, yaw: yawDeg };
     saveBillboardPositions();
+    var rotation = yawToQuaternion(yawDeg);
     var textJson = buildBillboardText(mode);
-    var rotation = (typeof BILLBOARD_ROTATION !== 'undefined' && BILLBOARD_ROTATION[mode]) ? BILLBOARD_ROTATION[mode] : '0f,0f,0f,1f';
-    var nbt      = '{Tags:["' + tag + '"],billboard:"fixed",background:0,line_width:300,transformation:{left_rotation:[' + rotation + '],right_rotation:[0f,0f,0f,1f],translation:[0f,0f,0f],scale:[1f,1f,1f]},text:\'' + textJson + '\'}'; 
-    ctx.source.server.runCommandSilent(
-      'execute as ' + playerName + ' in minecraft:overworld run summon minecraft:text_display ' + x + ' ' + y + ' ' + z + ' ' + nbt
-    );
+    var nbt = '{Tags:["' + tag + '"],billboard:"fixed",background:0,line_width:300,transformation:{left_rotation:[' + rotation + '],right_rotation:[0f,0f,0f,1f],translation:[0f,0f,0f],scale:[1f,1f,1f]},text:\'' + textJson + '\'}';
+    player.tell('§7[dbg] yaw=' + yawDeg + ' rot=' + rotation);
+    player.tell('§7[dbg] nbt[0..80]=' + nbt.substring(0, 80));
+    ctx.source.server.runCommandSilent('execute as ' + playerName + ' in minecraft:overworld run summon minecraft:text_display ' + x + ' ' + y + ' ' + z + ' ' + nbt);
     ctx.source.server.runCommandSilent('execute in minecraft:overworld run forceload add ' + x + ' ' + z);
-    player.tell('§a[Gambit Board] ' + mode.charAt(0).toUpperCase() + mode.slice(1) + ' billboard placed at ' + x + ' ' + y + ' ' + z + '.');
+    player.tell('§a[Gambit Board] ' + mode + ' placed at ' + x + ' ' + y + ' ' + z + ' facing ' + yawToCompass(yawDeg) + ' (yaw=' + yawDeg + '). Stand ' + yawToCompass((yawDeg + 180) % 360) + ' of it to see the front.');
     return 1;
   }
 
@@ -612,12 +654,12 @@ ServerEvents.commandRegistry(function(event) {
       .requires(function(src) { return src.hasPermission(2); })
       .then(
         Commands.literal('setup')
-          .then(Commands.literal('combined').executes(function(ctx) { return setupBillboard(ctx, 'combined'); }))
-          .then(Commands.literal('elim').executes(function(ctx) { return setupBillboard(ctx, 'elim'); }))
-          .then(Commands.literal('tdm').executes(function(ctx) { return setupBillboard(ctx, 'tdm'); }))
-          .then(Commands.literal('combined_session').executes(function(ctx) { return setupBillboard(ctx, 'combined_session'); }))
-          .then(Commands.literal('elim_session').executes(function(ctx) { return setupBillboard(ctx, 'elim_session'); }))
-          .then(Commands.literal('tdm_session').executes(function(ctx) { return setupBillboard(ctx, 'tdm_session'); }))
+          .then(Commands.literal('combined').executes(function(ctx) { return setupBillboard(ctx, 'combined', null); }).then(Commands.argument('yaw', IntegerArgumentType.integer(0, 359)).executes(function(ctx) { return setupBillboard(ctx, 'combined', parseInt(IntegerArgumentType.getInteger(ctx, 'yaw'), 10)); })))
+          .then(Commands.literal('elim').executes(function(ctx) { return setupBillboard(ctx, 'elim', null); }).then(Commands.argument('yaw', IntegerArgumentType.integer(0, 359)).executes(function(ctx) { return setupBillboard(ctx, 'elim', parseInt(IntegerArgumentType.getInteger(ctx, 'yaw'), 10)); })))
+          .then(Commands.literal('tdm').executes(function(ctx) { return setupBillboard(ctx, 'tdm', null); }).then(Commands.argument('yaw', IntegerArgumentType.integer(0, 359)).executes(function(ctx) { return setupBillboard(ctx, 'tdm', parseInt(IntegerArgumentType.getInteger(ctx, 'yaw'), 10)); })))
+          .then(Commands.literal('combined_session').executes(function(ctx) { return setupBillboard(ctx, 'combined_session', null); }).then(Commands.argument('yaw', IntegerArgumentType.integer(0, 359)).executes(function(ctx) { return setupBillboard(ctx, 'combined_session', parseInt(IntegerArgumentType.getInteger(ctx, 'yaw'), 10)); })))
+          .then(Commands.literal('elim_session').executes(function(ctx) { return setupBillboard(ctx, 'elim_session', null); }).then(Commands.argument('yaw', IntegerArgumentType.integer(0, 359)).executes(function(ctx) { return setupBillboard(ctx, 'elim_session', parseInt(IntegerArgumentType.getInteger(ctx, 'yaw'), 10)); })))
+          .then(Commands.literal('tdm_session').executes(function(ctx) { return setupBillboard(ctx, 'tdm_session', null); }).then(Commands.argument('yaw', IntegerArgumentType.integer(0, 359)).executes(function(ctx) { return setupBillboard(ctx, 'tdm_session', parseInt(IntegerArgumentType.getInteger(ctx, 'yaw'), 10)); })))
       )
       .then(
         Commands.literal('remove')
@@ -696,6 +738,47 @@ ServerEvents.commandRegistry(function(event) {
             return 1;
           })
       )
+  );
+
+  // ── /gambitfinisherdbg ────────────────────────────────────
+  // Tests the finisher sword detection on the executing player's held item.
+  event.register(
+    Commands.literal('gambitfinisherdbg')
+      .requires(function(src) { return src.hasPermission(2); })
+      .executes(function(ctx) {
+        var player = ctx.source.player;
+        if (!player) return 0;
+        var tell = function(msg) { player.tell(msg); };
+        tell('\u00a76\u00a7l\u2500\u2500 Finisher Debug \u2500\u2500');
+
+        // 1. Main hand item
+        var item = null;
+        try { item = player.mainHandItem; } catch(e) { tell('\u00a7c mainHandItem threw: ' + e); return 1; }
+        if (!item) { tell('\u00a7c mainHandItem is null'); return 1; }
+        tell('\u00a77 itemId: \u00a7f' + String(item.id));
+        tell('\u00a77 isEmpty: \u00a7f' + String(item.isEmpty ? item.isEmpty() : '?'));
+
+        // 2. NBT via .nbt
+        var nbt = null;
+        try { nbt = item.nbt; } catch(e) { tell('\u00a7c item.nbt threw: ' + e); }
+        tell('\u00a77 item.nbt: \u00a7f' + String(nbt));
+
+        // 3. String indexOf check
+        var nbtStr = String(nbt);
+        tell('\u00a77 indexOf GambitFinisher: \u00a7f' + nbtStr.indexOf('GambitFinisher'));
+        tell('\u00a77 hasFinisher: \u00a7f' + (nbtStr.indexOf('GambitFinisher') !== -1));
+
+        // 4. recentlyDowned keys
+        var rdKeys = [];
+        try { rdKeys = Object.keys(recentlyDowned); } catch(e) {}
+        tell('\u00a77 recentlyDowned: \u00a7f[' + rdKeys.join(', ') + ']');
+
+        // 5. Tags on executor
+        tell('\u00a77 hasTag Red: \u00a7f' + hasTagSafe(player, 'Red'));
+        tell('\u00a77 hasTag Blue: \u00a7f' + hasTagSafe(player, 'Blue'));
+
+        return 1;
+      })
   );
 
   // ── /gambitdb ─────────────────────────────────────────────

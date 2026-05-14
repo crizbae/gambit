@@ -21,6 +21,7 @@ var currentStreaks         = {}; // { playerName: number } — reset on death, n
 var downerNames           = {}; // { deadPlayerName: downerName } — most recent downer (bleed-out kill credit)
 var firstDownerNames      = {}; // { deadPlayerName: downerName } — first downer this life (assist credit)
 var pendingExecutions     = []; // { victimName, killerName, victimTeam } — deferred to next tick
+var _executingVictims     = {}; // { playerName: true } — set while gambit:execution damage is in flight
 var syringeCounts         = {}; // { playerName: syringe count last poll } — revive tracking
 var recentlyDowned        = {}; // { playerName: expiresAtMs } — window for syringe revive credit
 
@@ -147,8 +148,11 @@ PlayerEvents.loggedIn(function(event) {
   // OPs are exempt from forced gamemode and spawn TP so they can work on maps freely.
   if (!player.hasPermissions(2)) {
     player.server.runCommandSilent('gamemode adventure ' + name);
-    player.server.runCommandSilent('execute in minecraft:overworld run tp ' + name + ' 0 0 0');
+    player.server.runCommandSilent('execute in minecraft:overworld run tp ' + name + ' 0 101 0');
   }
+
+  // Ensure player is in lobby team (covers first-ever login and post-reload edge cases)
+  player.server.runCommandSilent('team join lobby ' + name);
 
   // Reset down counter on join so a disconnect/reconnect between matches starts clean.
   writeTagNumber(player.persistentData, PD_DOWNS, 0, true);
@@ -201,16 +205,23 @@ PlayerEvents.loggedOut(function(event) {
   server.runCommandSilent('scoreboard players set ' + name + ' spec_respawn_timer 0');
   server.runCommandSilent('scoreboard players set ' + name + ' gun_downs 0');
 
-  // Reset gamemode, inventory, effects, and spawnpoint (OPs keep their gamemode)
+  // Reset gamemode, inventory, effects, and spawnpoint (OPs keep their gamemode and inventory)
   if (!player.hasPermissions(2)) {
     server.runCommandSilent('gamemode adventure ' + name);
+    server.runCommandSilent('clear ' + name);
   }
-  server.runCommandSilent('clear ' + name);
   server.runCommandSilent('effect clear ' + name);
-  server.runCommandSilent('spawnpoint ' + name + ' 0 0 0');
+  server.runCommandSilent('spawnpoint ' + name + ' 0 101 0');
 
   // Place back in lobby team
   server.runCommandSilent('team join lobby ' + name);
+
+  // Persist stats so a restart never loses data for this player.
+  // saveEntryToPlayer writes to NBT; saveStatsToDisk flushes to JSON immediately.
+  if (stats[name]) {
+    saveEntryToPlayer(player);
+    saveStatsToDisk();
+  }
 
   // Clear in-memory tracking state for this player
   delete currentStreaks[name];
@@ -252,17 +263,31 @@ ServerEvents.tick(function(event) {
         var tellrawParts = ['""'];
         if (vTeam) tellrawParts.push('{"text":"[' + vTeam + '] ","color":"' + vColor + '"}');
         tellrawParts.push('{"text":"' + pe.victimName + '","color":"' + vColor + '"}');
-        tellrawParts.push('{"text":" was shot by ","color":"white"}');
+        tellrawParts.push('{"text":"' + (pe.finisher ? ' was finished by ' : ' was shot by ') + '","color":"white"}');
         if (kTeam) tellrawParts.push('{"text":"[' + kTeam + '] ","color":"' + kColor + '"}');
         tellrawParts.push('{"text":"' + pe.killerName + '","color":"' + kColor + '"}');
         event.server.runCommandSilent('tellraw @a [' + tellrawParts.join(',') + ']');
       }
       event.server.runCommandSilent('gamerule showDeathMessages false');
+      _executingVictims[pe.victimName] = true;
       event.server.runCommandSilent('damage ' + pe.victimName + ' 1000 gambit:execution');
+      delete _executingVictims[pe.victimName];
       event.server.runCommandSilent('gamerule showDeathMessages true');
       // Blood burst — runs after damage so the victim's position is still valid for one tick
       event.server.runCommandSilent('execute at ' + pe.victimName + ' run particle minecraft:dust 1 0 0 1 ~ ~1 ~ 0.4 0.6 0.4 0.05 80 normal');
       event.server.runCommandSilent('execute at ' + pe.victimName + ' run particle minecraft:dust 0.6 0 0 0.8 ~ ~1 ~ 0.2 0.4 0.2 0.02 40 normal');
+    }
+  }
+
+  // ── Clear invulnerableTime for downed players ──────────────
+  // PlayerRevive may keep invulnerableTime high while a player is downed, which
+  // would block EntityEvents.hurt from firing for finisher sword swings.
+  // Clearing it each tick guarantees the sword can always register.
+  var _rdNow = Date.now();
+  for (var _rdKey in recentlyDowned) {
+    if (recentlyDowned[_rdKey] > _rdNow) {
+      var _rdP = getOnlinePlayerByName(event.server, _rdKey);
+      if (_rdP) try { _rdP.invulnerableTime = 0; } catch (_re) {}
     }
   }
 
@@ -355,11 +380,76 @@ EntityEvents.hurt(function(event) {
   var source = event.source;
   var damage = event.damage;
 
-  // Guard: skip re-entry from our own gambit:execution command.
+  // Guard: skip re-entry from our own gambit:execution damage command.
+  // getMsgId() was removed in MC 1.20.1, so we use a JS flag as the primary guard.
+  var _reEntryVictim = entity.name && entity.name.string ? entity.name.string : null;
+  if (_reEntryVictim && _executingVictims[_reEntryVictim]) return;
+  // Fallback msgId guard (handles outOfWorld / generic_kill from other sources).
   var _srcMsgId = '';
-  try { _srcMsgId = String(source.getMsgId()); } catch (e) {}
+  try { _srcMsgId = String(source.getMsgId()); } catch (e) {
+    try { _srcMsgId = String(source.type().msgId()); } catch (e2) {}
+  }
   if (_srcMsgId === 'gambit.execution' || _srcMsgId === 'gambit:execution'
       || _srcMsgId === 'generic_kill' || _srcMsgId === 'outOfWorld') return;
+
+  // ── Lobby damage immunity ─────────────────────────────────
+  if (entity.player && hasTagSafe(entity, 'gun_in_lobby')) {
+    event.cancel();
+    return;
+  }
+
+  // ── Finisher sword ─────────────────────────────────────────────────────────
+  // Resolve attacker — source.player is null for melee in KubeJS 1.20.1;
+  // fall back to source.entity / source.directEntity.
+  var _fAttacker = null;
+  try { if (source.player) _fAttacker = source.player; } catch (_fe1) {}
+  if (!_fAttacker) { try { var _fse = source.entity;       if (_fse && _fse.mainHandItem) _fAttacker = _fse; } catch (_fe2) {} }
+  if (!_fAttacker) { try { var _fde = source.directEntity; if (_fde && _fde.mainHandItem) _fAttacker = _fde; } catch (_fe3) {} }
+
+  if (_fAttacker && entity && entity.player) {
+    var _fItem = null;
+    try { _fItem = _fAttacker.mainHandItem; } catch (_fie) {}
+    var _fHasFinisher = false;
+    if (_fItem) {
+      var _fnbtStr = 'null';
+      try { _fnbtStr = String(_fItem.nbt); } catch (_fne) {}
+      if (_fnbtStr !== 'null') {
+        _fHasFinisher = _fnbtStr.indexOf('GambitFinisher') !== -1;
+      } else {
+        try { _fnbtStr = String(_fItem.orCreateTag); _fHasFinisher = _fnbtStr.indexOf('GambitFinisher') !== -1; } catch (_fne2) {}
+      }
+      if (!_fHasFinisher) {
+        try {
+          var _fDispName = String(_fItem.displayName ? _fItem.displayName.string : '');
+          _fHasFinisher = (String(_fItem.id) === 'minecraft:iron_sword') && _fDispName.indexOf('Finisher') !== -1;
+        } catch (_fne3) {}
+      }
+    }
+    if (_fHasFinisher) {
+      event.cancel();
+      var _fVName = entity.name && entity.name.string ? entity.name.string : null;
+      var _fCross = (hasTagSafe(entity, 'Red') && hasTagSafe(_fAttacker, 'Blue'))
+                 || (hasTagSafe(entity, 'Blue') && hasTagSafe(_fAttacker, 'Red'));
+      // Consider the victim downed if tracked in recentlyDowned OR if PlayerRevive
+      // has them at very low health (it keeps downed players at ≤1 HP).
+      var _fIsDowned = _fVName && _fCross && (
+        (recentlyDowned[_fVName] && Date.now() < recentlyDowned[_fVName]) ||
+        (entity.health <= 1.0 && (hasTagSafe(entity, 'Red') || hasTagSafe(entity, 'Blue')))
+      );
+      if (_fIsDowned) {
+        var _fAlready = false;
+        for (var _fpi = 0; _fpi < pendingExecutions.length; _fpi++) {
+          if (pendingExecutions[_fpi].victimName === _fVName) { _fAlready = true; break; }
+        }
+        if (!_fAlready) {
+          var _fKName = _fAttacker.name && _fAttacker.name.string ? _fAttacker.name.string : null;
+          var _fVTeam = hasTagSafe(entity, 'Red') ? 'Red' : 'Blue';
+          pendingExecutions.push({ victimName: _fVName, killerName: _fKName, victimTeam: _fVTeam, finisher: true });
+        }
+      }
+      return;
+    }
+  }
 
   // ── TACZ stats tracking ───────────────────────────────────
   var bullet      = source.immediate;
@@ -425,6 +515,9 @@ EntityEvents.hurt(function(event) {
     if (!downsConfig.enabled || isBypassed) return;
 
     var victimName = entity.name && entity.name.string ? entity.name.string : null;
+    // Skip if the player is already in a downed window — prevents non-finisher melee /
+    // bullet splash from re-triggering down logic while they're waiting for execution or revive.
+    if (victimName && recentlyDowned[victimName] && Date.now() < recentlyDowned[victimName]) return;
     var currentDowns = Math.floor(readTagNumber(entity.persistentData, PD_DOWNS, 0));
 
     // Peek at attacker cache (don't consume — EntityEvents.death still needs it).

@@ -14,7 +14,12 @@ scoreboard players set @a life_kills 0
 scoreboard players set @a life_dmg 0
 scoreboard players reset Red pleft_sidebar
 scoreboard players reset Blue pleft_sidebar
+scoreboard players reset §cRed pleft_sidebar
+scoreboard players reset §bBlue pleft_sidebar
 scoreboard players reset Goal pleft_sidebar
+scoreboard players reset Red tdm_kills
+scoreboard players reset Blue tdm_kills
+scoreboard players reset Goal tdm_kills
 scoreboard players set #ration_mod ration_roll 4
 scoreboard players set #warn_gap tdm_ui 5
 scoreboard players set #RedWarn tdm_ui 0

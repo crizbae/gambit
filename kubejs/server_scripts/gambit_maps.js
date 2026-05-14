@@ -34,91 +34,100 @@ var MAPS = [
     name: 'Pine Crossing',
     preset: 'pinecrossing',
     modes: ['elimination'],
-    red_spawn: '1041.66 39.00 -110.46 129.62 0.90',
-    blue_spawn: '879.45 39.00 -274.27 310.52 3.75',
-    spectator: '960.55 47.00 -192.37 180.00 12.00'
+    disc: 'minecraft:music_disc_far',
+    red_spawn: '587.49 111.00 -410.55 -585.07 2.10',
+    blue_spawn: '425.47 111.00 -574.54 -761.96 2.25',
+    spectator: '491.94 146.16 -468.34 -498.36 40.95'
   },
   {
     id: 3,
     name: 'Trenches',
     preset: 'trenches',
     modes: ['elimination'],
-    red_spawn: '146.50 28.00 -554.49 -1349.87 -1.05',
-    blue_spawn: '18.54 28.00 -550.51 -1889.91 -3.58',
-    spectator: '82.35 53.78 -592.15 -1440.33 51.74'
+    disc: 'minecraft:music_disc_stal',
+    red_spawn: '1057.47 120.00 -496.49 -268.99 -0.45',
+    blue_spawn: '929.53 120.00 -492.53 -449.58 -2.10',
+    spectator: '990.29 141.98 -532.33 -363.93 36.60'
   },
   {
     id: 4,
     name: 'Training Grounds',
     preset: 'training_grounds',
     modes: ['tdm'],
-    red_spawn: '930.44 36.00 -718.63 180.81 4.01',
-    blue_spawn: '930.49 36.00 -905.42 720.93 4.31',
-    spectator: '930.47 48.15 -813.14 -89.11 89.25'
+    disc: 'minecraft:music_disc_blocks',
+    red_spawn: '494.47 99.00 -904.45 -179.57 0.30',
+    blue_spawn: '494.47 99.00 -1091.44 -0.32 0.45',
+    spectator: '513.66 114.04 -999.56 89.98 39.45'
   },
   {
     id: 5,
     name: 'Mall',
     preset: 'mall',
     modes: ['tdm'],
-    red_spawn: '732.45 58.00 -734.48 90.18 -0.00',
-    blue_spawn: '588.45 58.00 -734.49 -89.89 -0.16',
-    spectator: '656.50 73.15 -720.71 -4859.61 14.40'
+    disc: 'minecraft:music_disc_mall',
+    red_spawn: '-423.51 98.00 493.52 -270.09 -1.95',
+    blue_spawn: '-567.53 98.00 493.53 -449.64 -1.50',
+    spectator: '-499.48 114.66 507.54 -540.09 34.83'
   },
   {
     id: 6,
     name: 'CryoLab',
     preset: 'cryolab',
     modes: ['elimination'],
-    red_spawn: '584.5 57.50 -570.5 -90 0',
-    blue_spawn: '802.5 57.5 -570.5 90 0',
-    spectator: '693 62.00 -570 0 0'
+    disc: 'minecraft:music_disc_13',
+    red_spawn: '390.54 104.00 1000.53 -90.25 -0.30',
+    blue_spawn: '608.49 104.00 1000.51 89.75 -1.35',
+    spectator: '497.99 109.34 1020.95 180.35 16.05'
   },
   {
     id: 7,
     name: 'Yuritopia',
     preset: 'yuritopia',
     modes: ['tdm'],
-    red_spawn: '9.5 45.5 -2069.5 -1320 0',
-    blue_spawn: '-212.5 45.5 -2177.5 -1140 0',
-    spectator: '-103.97 75.03 -2081.76 -1259.31 36.67'
+    disc: 'minecraft:music_disc_cat',
+    red_spawn: '-388.55 94.00 1054.45 495.55 0.30',
+    blue_spawn: '-610.52 94.00 946.48 675.26 0.00',
+    spectator: '-508.27 117.54 1024.64 553.00 31.65'
   },
   {
     id: 8,
     name: 'Canopy',
     preset: 'canopy',
     modes: ['elimination'],
-    red_spawn: '345.5 47.50 -381.5 180 0',
-    blue_spawn: '345.5 47.50 -519.5 360 0',
-    spectator: '400 63 -449.5 450 25'
+    disc: 'minecraft:music_disc_chirp',
+    red_spawn: '1000.51 94.00 569.38 -179.96 -5.10',
+    blue_spawn: '1000.51 94.00 431.54 0.49 -2.55',
+    spectator: '1060.56 120.78 500.47 90.34 19.71'
   },
   {
     id: 10,
-    name: 'Neopolitan',
-    preset: 'neopolitan',
+    name: 'Neapolitan',
+    preset: 'neapolitan',
     noVote: true,
     modes: ['tdm'],
-    red_spawn: '797.39 71.00 -11.44 71.69 3.54',
-    blue_spawn: '709.78 71.00 133.37 258.93 1.80',
-    spectator: '777.07 104.66 60.02 82.83 42.41'
+    red_spawn: '1045.49 83.00 -1073.50 -300.87 1.35',
+    blue_spawn: '957.54 83.00 -922.50 -110.22 0.15',
+    spectator: '958.85 110.29 -997.42 -89.70 37.58'
   },
   {
     id: 11,
     name: 'Vivian Station',
     preset: 'vivianstation',
     modes: ['elimination'],
-    red_spawn: '507.59 92.00 -605.40 -181.56 1.49',
-    blue_spawn: '507.49 93.00 -764.40 2880.38 54.51',
-    spectator: '507.38 104.20 -693.67 2874.55 0.81'
+    disc: 'minecraft:music_disc_wait',
+    red_spawn: '-999.51 106.00 588.46 -1620.47 2.55',
+    blue_spawn: '-999.53 107.00 429.58 -1799.45 1.50',
+    spectator: '-1009.90 118.03 501.71 -1891.24 33.30'
   },
   {
     id: 12,
     name: 'de_Solace',
     preset: 'solace',
     modes: ['elimination'],
-    red_spawn: '-123.56 23.00 -444.50 -293.31 -0.30',
-    blue_spawn: '-211.57 23.00 -440.43 -98.86 -0.60',
-    spectator: '-164.89 46.62 -457.58 -361.05 52.65'
+    disc: 'minecraft:music_disc_otherside',
+    red_spawn: '536.43 119.00 513.51 90.05 1.50',
+    blue_spawn: '448.53 119.00 517.54 -450.40 0.45',
+    spectator: '484.95 140.66 492.27 -363.10 54.75'
   },
   {
     id: 13,
@@ -126,10 +135,9 @@ var MAPS = [
     preset: 'arena1',
     noVote: true,
     modes: ['elimination'],
-    red_spawn: '-155.48 84.00 -2392.52 -10799.89 0.15',
-    blue_spawn: '-155.58 84.00 -2320.57 -10619.28 0.30',
-    spectator: '-167.26 106.03 -2356.22 -10530.17 62.55',
-    time: 18000
+    red_spawn: '-111.49 91.00 -35.51 -33840.06 0.45',
+    blue_spawn: '-111.51 91.00 36.51 -33660.08 0.45',
+    spectator: '-93.31 102.00 0.75 -33749.50 29.47',
   },
   {
     id: 14,
@@ -137,9 +145,19 @@ var MAPS = [
     preset: 'arena2',
     noVote: true,
     modes: ['elimination'],
-    red_spawn: '-41.49 84.00 -2322.47 -3420.10 -0.30',
-    blue_spawn: '-41.50 84.00 -2394.55 -3600.09 -1.35',
-    spectator: '-23.30 104.49 -2357.96 -3509.07 54.30'
+    red_spawn: '-189.51 91.00 36.51 -33659.96 -0.60',
+    blue_spawn: '-189.53 91.00 -35.50 -34560.19 0.45',
+    spectator: '-167.62 96.00 0.48 -44550.13 10.20',
+  },
+  {
+    id: 15,
+    name: 'Arena',
+    preset: 'arena3',
+    noVote: true,
+    modes: ['elimination'],
+    red_spawn: '-266.50 91.00 36.42 -2339.95 0.30',
+    blue_spawn: '-266.47 91.00 -35.45 -2159.97 0.60',
+    spectator: '-244.60 96.00 0.53 -2428.75 10.20'
   }
   
 ];
@@ -216,7 +234,8 @@ function _pickVoteOptions(excludeMapId) {
         name:         m.name,
         modeName:     isTdm ? 'TDM' : 'Elimination',
         modeColor:    isTdm ? 'aqua' : 'green',
-        bossbarColor: isTdm ? 'blue' : 'green'
+        bossbarColor: isTdm ? 'blue' : 'green',
+        disc:         m.disc || 'minecraft:music_disc_13'
       });
     }
   }
@@ -228,7 +247,38 @@ function _pickVoteOptions(excludeMapId) {
   return pool.slice(0, 3);
 }
 
-function _broadcastVoteOptions(server) {
+function _giveVotePapers(server) {
+  var opts = voteOptions;
+  server.players.forEach(function(player) {
+    if (player.isCreative() || player.isSpectator()) return;
+    for (var i = 0; i < 3; i++) {
+      if (!opts[i]) continue;
+      var opt = opts[i];
+      var modeCol = opt.modeId === 1 ? 'aqua' : 'green';
+      var nameJson = '[{"text":"' + opt.name + '","color":"white","italic":false},{"text":" \u2014 ' + opt.modeName + '","color":"' + modeCol + '","italic":false}]';
+      var lore1 = '{"text":"Right-click to vote","color":"gray","italic":true}';
+      var nbt = "{display:{Name:'" + nameJson + "',Lore:['" + lore1 + "']},GambitVote:" + (i + 1) + "b}";
+      player.give(Item.of(opt.disc, nbt));
+    }
+    // Option 4: Random
+    var randomName = '{"text":"Random Map","color":"light_purple","italic":false}';
+    var randomLore = '{"text":"Right-click to vote","color":"gray","italic":true}';
+    var randomNbt = "{display:{Name:'" + randomName + "',Lore:['" + randomLore + "']},GambitVote:4b}";
+    player.give(Item.of('minecraft:music_disc_pigstep', randomNbt));
+  });
+}
+
+function _removeVotePapers(server) {
+  for (var i = 0; i < _VOTE_DISC_TYPES.length; i++) {
+    server.runCommandSilent('clear @a ' + _VOTE_DISC_TYPES[i] + '{GambitVote:1b}');
+    server.runCommandSilent('clear @a ' + _VOTE_DISC_TYPES[i] + '{GambitVote:2b}');
+    server.runCommandSilent('clear @a ' + _VOTE_DISC_TYPES[i] + '{GambitVote:3b}');
+    server.runCommandSilent('clear @a ' + _VOTE_DISC_TYPES[i] + '{GambitVote:4b}');
+  }
+}
+
+// (kept as fallback — primary voting is now via inventory papers)
+function _broadcastVoteOptions_unused(server) {
   server.runCommandSilent('tellraw @a {"text":"·················································","color":"dark_gray","strikethrough":true}');
   server.runCommandSilent('tellraw @a ["",{"text":"  Vote for the Next Map!","color":"gold","bold":true},{"text":"  (30 seconds)","color":"gray"}]');
   // Options 1-3: real maps
@@ -294,6 +344,7 @@ function _resolveVote(server) {
   voteTicksLeft = 0;
   voteLastSecondsLeft = -1;
   voteExcludeMapId = 0;
+  _removeVotePapers(server);
 
   var winner;
   if (winIdx === 3) {
@@ -305,6 +356,7 @@ function _resolveVote(server) {
     for (var ri = 0; ri < MAPS.length; ri++) {
       var rm = MAPS[ri];
       if (shownIds[rm.id]) continue;
+      if (rm.noVote) continue;
       for (var rj = 0; rj < rm.modes.length; rj++) {
         var risTdm = rm.modes[rj] === 'tdm';
         randomPool.push({
@@ -322,6 +374,7 @@ function _resolveVote(server) {
       for (var fi = 0; fi < MAPS.length; fi++) {
         var fm = MAPS[fi];
         if (fm.id === savedExclude) continue;
+        if (fm.noVote) continue;
         for (var fj = 0; fj < fm.modes.length; fj++) {
           var fisTdm = fm.modes[fj] === 'tdm';
           randomPool.push({
@@ -369,7 +422,30 @@ function _startVote(server, excludeMapId) {
   // Show bossbar immediately
   server.runCommandSilent('bossbar set gun:nextmap visible true');
   _updateVoteBossbar(server, Math.ceil(VOTE_DURATION_TICKS / 20));
-  _broadcastVoteOptions(server);
+  // Title screen
+  server.runCommandSilent('title @a times 10 60 20');
+  server.runCommandSilent('title @a title ["",{"text":"Vote for Next Map","color":"gold","bold":true}]');
+  server.runCommandSilent('title @a subtitle {"text":"Check your inventory!","color":"yellow"}');
+  // Brief chat notice
+  server.runCommandSilent('tellraw @a ["",{"text":"[Vote] ","color":"gold","bold":true},{"text":"Right-click your vote discs to choose the next map.","color":"yellow"}]');
+  // Give vote papers to all online players
+  _giveVotePapers(server);
+}
+
+function _castVoteForPlayer(player, server, optionIndex) {
+  if (!voteActive) return;
+  if (optionIndex < 0 || optionIndex > 3) return;
+  var playerName = getPlayerName(player);
+  if (!playerName) return;
+  voteChoices[playerName] = optionIndex;
+  if (optionIndex === 3) {
+    player.tell('§7You voted for §5Random Map');
+  } else if (voteOptions[optionIndex]) {
+    var opt = voteOptions[optionIndex];
+    player.tell('§7You voted for §f' + opt.name + ' §7— §' + (opt.modeId === 1 ? 'b' : 'a') + opt.modeName);
+  }
+  // Ding sound
+  server.runCommandSilent('execute as ' + playerName + ' at @s run playsound minecraft:block.note_block.pling master @s ~ ~ ~ 1 2');
 }
 
 function _castVote(ctx, optionIndex) {
@@ -380,15 +456,7 @@ function _castVote(ctx, optionIndex) {
   if (optionIndex < 0 || optionIndex > 3) return 0;
   var player = ctx.source.player;
   if (!player) return 0;
-  var playerName = getPlayerName(player);
-  if (!playerName) return 0;
-  voteChoices[playerName] = optionIndex;
-  if (optionIndex === 3) {
-    player.tell('§7You voted for §5Random Map');
-  } else {
-    var opt = voteOptions[optionIndex];
-    player.tell('§7You voted for §f' + opt.name + ' §7— §' + (opt.modeId === 1 ? 'b' : 'a') + opt.modeName);
-  }
+  _castVoteForPlayer(player, ctx.source.server, optionIndex);
   return 1;
 }
 
@@ -476,6 +544,9 @@ function _executeStart(server) {
   server.runCommandSilent('execute in minecraft:overworld run tp @a[tag=Blue,gamemode=!spectator,gamemode=!creative] ' + blueCoords);
 
   if (isTdm) {
+    var _tdmPlayerCount = server.players ? server.players.size() : 0;
+    var _tdmTarget = Math.max(10, _tdmPlayerCount * 2);
+    server.runCommandSilent('scoreboard players set #target tdm_kill_target ' + _tdmTarget);
     server.runCommandSilent('function gun:tdm/init');
   } else {
     server.runCommandSilent('scoreboard players set #mode mode_id 0');
@@ -501,9 +572,11 @@ function _executeStart(server) {
     server.runCommandSilent('execute as @a[tag=gun_optout,gamemode=spectator] run function gun:starts/spectator_tpmap');
   }
 
-  // Tournament: TP non-participant spectators (forced by tournament_general) to the map view.
+  // Tournament: TP non-participants to the map spectator view, then put them in adventure
+  // so they can walk around the stands rather than being locked in spectator mode.
   if (tournamentActive) {
-    server.runCommandSilent('execute as @a[gamemode=spectator,tag=!Red,tag=!Blue] run function gun:starts/spectator_tpmap');
+    server.runCommandSilent('execute as @a[tag=!Red,tag=!Blue,gamemode=!creative] run function gun:starts/spectator_tpmap');
+    server.runCommandSilent('gamemode adventure @a[tag=!Red,tag=!Blue,gamemode=!creative]');
   }
 
   // Tournament mode: strip syringes after kits have been fully applied.
@@ -527,6 +600,7 @@ ServerEvents.loaded(function(event) {
   voteTicksLeft = 0;
   voteLastSecondsLeft = -1;
   voteExcludeMapId = 0;
+  _removeVotePapers(event.server);
 });
 
 // ── Autostart tick ───────────────────────────────────────────
@@ -603,6 +677,7 @@ ServerEvents.commandRegistry(function (event) {
               .executes(function (ctx) {
                 // Cancel any active vote
                 if (voteActive) {
+                  _removeVotePapers(ctx.source.server);
                   voteActive = false;
                   voteOptions = [];
                   voteChoices = {};
@@ -765,6 +840,7 @@ ServerEvents.commandRegistry(function (event) {
             autostartTicksLeft = 0;
             autostartLastSecondsLeft = -1;
             ctx.source.server.runCommandSilent('bossbar set gun:nextmap visible false');
+            _removeVotePapers(ctx.source.server);
             ctx.source.server.runCommandSilent(
               'tellraw @a ["",{"text":"[Gambit] ","color":"gray"},{"text":"Map vote cancelled.","color":"red"}]'
             );
@@ -784,4 +860,28 @@ ServerEvents.commandRegistry(function (event) {
           })
       )
   );
+});
+
+// ── Vote disc right-click handlers ──────────────────────────
+var _VOTE_DISC_TYPES = [
+  'minecraft:music_disc_far',    // Pine Crossing
+  'minecraft:music_disc_stal',   // Trenches
+  'minecraft:music_disc_blocks', // Training Grounds
+  'minecraft:music_disc_mall',   // Mall
+  'minecraft:music_disc_13',     // CryoLab
+  'minecraft:music_disc_cat',    // Yuritopia
+  'minecraft:music_disc_chirp',  // Canopy
+  'minecraft:music_disc_wait',   // Vivian Station
+  'minecraft:music_disc_otherside', // de_Solace
+  'minecraft:music_disc_pigstep'    // Random
+];
+_VOTE_DISC_TYPES.forEach(function(discType) {
+  ItemEvents.rightClicked(discType, function(event) {
+    if (!voteActive) return;
+    var nbt = event.item.nbt;
+    if (!nbt || !nbt.contains('GambitVote')) return;
+    var voteIdx = nbt.getInt('GambitVote') - 1; // tags are 1–4, options are 0–3
+    _castVoteForPlayer(event.player, event.player.server, voteIdx);
+    event.cancel();
+  });
 });

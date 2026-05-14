@@ -1,5 +1,6 @@
 effect clear @a[gamemode=!creative,gamemode=!spectator,tag=!gun_optout]
 clear @a[gamemode=!creative,gamemode=!spectator,tag=!gun_optout]
+tag @a[gamemode=!creative,gamemode=!spectator] remove gun_in_lobby
 yawp global add flag item-drop Denied
 gamerule keepInventory true
 trapdoor off
@@ -20,7 +21,7 @@ scoreboard players set @a gun_downs 0
 gambit_reset_downs
 execute as @a[gamemode=!creative] run scoreboard players operation @s gun_deaths_prev = @s gun_deaths
 execute as @a[gamemode=!creative] run scoreboard players operation @s tdm_deaths_counted = @s gun_deaths
-execute as @a[tag=!marksman,tag=!breacher,tag=!flanker,tag=!assault,tag=!sniper,tag=!ranger,tag=!burst,tag=!sentry,gamemode=!creative,gamemode=!spectator,tag=!gun_optout] run tag @s add assault
+execute as @a[tag=!marksman,tag=!breacher,tag=!flanker,tag=!assault,tag=!sniper,tag=!ranger,tag=!burst,tag=!sentry,tag=!covert,gamemode=!creative,gamemode=!spectator,tag=!gun_optout] run tag @s add assault
 function gun:kits/armor
 function gun:kits/equip
 effect give @a[gamemode=!creative,gamemode=!spectator,tag=!gun_optout] minecraft:regeneration 5 255 true

@@ -38,12 +38,12 @@ function loadBillboardPos() {
     for (var mi = 0; mi < ALL_BILLBOARD_MODES.length; mi++) {
       var m = ALL_BILLBOARD_MODES[mi];
       if (pos[m] && typeof pos[m].x === 'number') {
-        billboardPositions[m] = { x: Math.floor(pos[m].x), y: Math.floor(pos[m].y), z: Math.floor(pos[m].z) };
+        billboardPositions[m] = { x: Math.floor(pos[m].x), y: Math.floor(pos[m].y), z: Math.floor(pos[m].z), yaw: typeof pos[m].yaw === 'number' ? pos[m].yaw : 0 };
       }
     }
     // Backward compat: old format was {x,y,z} at top level — treat as combined
     if (billboardPositions.combined === null && typeof pos.x === 'number') {
-      billboardPositions.combined = { x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z) };
+      billboardPositions.combined = { x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z), yaw: 0 };
     }
   } catch (e) {}
 }

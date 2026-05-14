@@ -4,8 +4,8 @@ execute unless score #mode mode_respawns matches 1 unless score #mode mode_id ma
 execute unless score #mode mode_respawns matches 1 unless score #mode mode_id matches -1 run bossbar set gun:elim_red name [{"text":"\u25cf Red  ","color":"red"},{"score":{"name":"#Red","objective":"rcount"},"color":"white"}]
 execute unless score #mode mode_respawns matches 1 unless score #mode mode_id matches -1 run execute store result bossbar gun:elim_blue value run scoreboard players get #Blue bcount
 execute unless score #mode mode_respawns matches 1 unless score #mode mode_id matches -1 run bossbar set gun:elim_blue name [{"text":"\u25cf Blue  ","color":"aqua"},{"score":{"name":"#Blue","objective":"bcount"},"color":"white"}]
-execute unless score #mode mode_id matches -1 unless score #mode mode_respawns matches 1 run scoreboard players operation Red pleft_sidebar = #Red rcount
-execute unless score #mode mode_id matches -1 unless score #mode mode_respawns matches 1 run scoreboard players operation Blue pleft_sidebar = #Blue bcount
+execute unless score #mode mode_id matches -1 unless score #mode mode_respawns matches 1 run scoreboard players operation §cRed pleft_sidebar = #Red rcount
+execute unless score #mode mode_id matches -1 unless score #mode mode_respawns matches 1 run scoreboard players operation §bBlue pleft_sidebar = #Blue bcount
 execute unless score #mode mode_id matches -1 if score #mode mode_respawns matches 1 run scoreboard players operation §cRed tdm_kills = #Red tdm_red_kills
 execute unless score #mode mode_id matches -1 if score #mode mode_respawns matches 1 run scoreboard players operation §bBlue tdm_kills = #Blue tdm_blue_kills
 execute as @a[tag=gun_optout] run title @s actionbar [{"text":"Spectate Mode","color":"yellow","bold":true},{"text":" - use ","color":"gray"},{"text":"/play","color":"green"},{"text":" to queue","color":"gray"}]

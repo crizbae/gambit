@@ -21,8 +21,12 @@ var PD_LONGEST_STREAK  = 'gambit_stats_longest_streak';
 var PD_REVIVES         = 'gambit_stats_revives';
 var PD_ELIM_SCORE      = 'gambit_stats_elim_score';
 var PD_ELIM_MATCHES    = 'gambit_stats_elim_matches';
+var PD_ELIM_KILLS      = 'gambit_stats_elim_kills';
+var PD_ELIM_DEATHS     = 'gambit_stats_elim_deaths';
 var PD_TDM_SCORE       = 'gambit_stats_tdm_score';
 var PD_TDM_MATCHES     = 'gambit_stats_tdm_matches';
+var PD_TDM_KILLS       = 'gambit_stats_tdm_kills';
+var PD_TDM_DEATHS      = 'gambit_stats_tdm_deaths';
 
 var LEADERBOARD_MIN_MATCHES_MODE = 3;
 var LEADERBOARD_MIN_MATCHES      = 10;
@@ -55,7 +59,8 @@ function getTodayDateString() {
 
 function makeDefaultSession() {
   return { date: getTodayDateString(), kills: 0, deaths: 0, damage: 0.0, matches: 0, wins: 0, assists: 0, mvps: 0,
-           elim_kills: 0, elim_deaths: 0, tdm_kills: 0, tdm_deaths: 0,
+           elim_kills: 0, elim_deaths: 0, elim_matches: 0, elim_damage: 0.0,
+           tdm_kills: 0, tdm_deaths: 0, tdm_matches: 0, tdm_damage: 0.0,
            longest_streak: 0, revives: 0 };
 }
 
@@ -127,8 +132,12 @@ function normalizeEntry(raw) {
       mvps:           Math.floor(Number(rawSession.mvps           || 0)),
       elim_kills:     Math.floor(Number(rawSession.elim_kills     || 0)),
       elim_deaths:    Math.floor(Number(rawSession.elim_deaths    || 0)),
+      elim_matches:   Math.floor(Number(rawSession.elim_matches   || 0)),
+      elim_damage:    Number(rawSession.elim_damage || 0.0),
       tdm_kills:      Math.floor(Number(rawSession.tdm_kills      || 0)),
       tdm_deaths:     Math.floor(Number(rawSession.tdm_deaths     || 0)),
+      tdm_matches:    Math.floor(Number(rawSession.tdm_matches    || 0)),
+      tdm_damage:     Number(rawSession.tdm_damage || 0.0),
       longest_streak: Math.floor(Number(rawSession.longest_streak || 0)),
       revives:        Math.floor(Number(rawSession.revives        || 0))
     };
@@ -226,6 +235,10 @@ function loadEntryFromPlayer(player) {
   entry.elim_matches     = Math.floor(readTagNumber(tag, PD_ELIM_MATCHES, 0));
   entry.tdm_score_total  = readTagNumber(tag, PD_TDM_SCORE, 0.0);
   entry.tdm_matches      = Math.floor(readTagNumber(tag, PD_TDM_MATCHES, 0));
+  entry.elim_kills       = Math.floor(readTagNumber(tag, PD_ELIM_KILLS,  0));
+  entry.elim_deaths      = Math.floor(readTagNumber(tag, PD_ELIM_DEATHS, 0));
+  entry.tdm_kills        = Math.floor(readTagNumber(tag, PD_TDM_KILLS,   0));
+  entry.tdm_deaths       = Math.floor(readTagNumber(tag, PD_TDM_DEATHS,  0));
   // Session: stored as JSON string in NBT
   try {
     var rawSess = null;
@@ -246,8 +259,12 @@ function loadEntryFromPlayer(player) {
           mvps:           Math.floor(Number(parsedSess.mvps           || 0)),
           elim_kills:     Math.floor(Number(parsedSess.elim_kills     || 0)),
           elim_deaths:    Math.floor(Number(parsedSess.elim_deaths    || 0)),
+          elim_matches:   Math.floor(Number(parsedSess.elim_matches   || 0)),
+          elim_damage:    Number(parsedSess.elim_damage || 0.0),
           tdm_kills:      Math.floor(Number(parsedSess.tdm_kills      || 0)),
           tdm_deaths:     Math.floor(Number(parsedSess.tdm_deaths     || 0)),
+          tdm_matches:    Math.floor(Number(parsedSess.tdm_matches    || 0)),
+          tdm_damage:     Number(parsedSess.tdm_damage || 0.0),
           longest_streak: Math.floor(Number(parsedSess.longest_streak || 0)),
           revives:        Math.floor(Number(parsedSess.revives        || 0))
         };
@@ -277,6 +294,10 @@ function saveEntryToPlayer(player) {
   writeTagNumber(tag, PD_ELIM_MATCHES,   entry.elim_matches || 0,     true);
   writeTagNumber(tag, PD_TDM_SCORE,      entry.tdm_score_total || 0.0, false);
   writeTagNumber(tag, PD_TDM_MATCHES,    entry.tdm_matches || 0,      true);
+  writeTagNumber(tag, PD_ELIM_KILLS,     entry.elim_kills  || 0,      true);
+  writeTagNumber(tag, PD_ELIM_DEATHS,    entry.elim_deaths || 0,      true);
+  writeTagNumber(tag, PD_TDM_KILLS,      entry.tdm_kills   || 0,      true);
+  writeTagNumber(tag, PD_TDM_DEATHS,     entry.tdm_deaths  || 0,      true);
   // Session: store as JSON string
   try {
     var sessJson = JSON.stringify(entry.session || makeDefaultSession());
@@ -307,18 +328,25 @@ function getKD(e) {
 
 function getElimKD(e) {
   if (!e) return 0;
-  return (e.elim_kills || 0) / Math.max(1, e.elim_deaths || 0);
+  var ek = e.elim_kills || 0;
+  var ed = e.elim_deaths || 0;
+  if (ek === 0 && ed === 0) return getKD(e); // fall back to overall until mode data exists
+  return ek / Math.max(1, ed);
 }
 
 function getTdmKD(e) {
   if (!e) return 0;
-  return (e.tdm_kills || 0) / Math.max(1, e.tdm_deaths || 0);
+  var tk = e.tdm_kills || 0;
+  var td = e.tdm_deaths || 0;
+  if (tk === 0 && td === 0) return getKD(e); // fall back to overall until mode data exists
+  return tk / Math.max(1, td);
 }
 
 function getCombinedKD(e) {
   if (!e) return 0;
   var k = (e.elim_kills || 0) + (e.tdm_kills || 0);
   var d = (e.elim_deaths || 0) + (e.tdm_deaths || 0);
+  if (k === 0 && d === 0) return getKD(e); // fall back to overall until mode data exists
   return k / Math.max(1, d);
 }
 
@@ -418,8 +446,13 @@ function applyMatchResult(server, targetArg, addMatch, addWin) {
       if (addWin)   e.wins   += 1;
       // Session
       if (!e.session || e.session.date !== getTodayDateString()) e.session = makeDefaultSession();
-      if (addMatch) e.session.matches += 1;
-      if (addWin)   e.session.wins   += 1;
+      if (addMatch) {
+        e.session.matches += 1;
+        var _amMode = (typeof currentModeId !== 'undefined') ? currentModeId : -1;
+        if (_amMode === 1) e.session.tdm_matches = (e.session.tdm_matches || 0) + 1;
+        else if (_amMode === 0) e.session.elim_matches = (e.session.elim_matches || 0) + 1;
+      }
+      if (addWin) e.session.wins += 1;
       saveEntryToPlayer(p);
       count += 1;
     });
@@ -436,8 +469,13 @@ function applyMatchResult(server, targetArg, addMatch, addWin) {
   if (addWin)   entry.wins   += 1;
   // Session
   if (!entry.session || entry.session.date !== getTodayDateString()) entry.session = makeDefaultSession();
-  if (addMatch) entry.session.matches += 1;
-  if (addWin)   entry.session.wins   += 1;
+  if (addMatch) {
+    entry.session.matches += 1;
+    var _amMode = (typeof currentModeId !== 'undefined') ? currentModeId : -1;
+    if (_amMode === 1) entry.session.tdm_matches = (entry.session.tdm_matches || 0) + 1;
+    else if (_amMode === 0) entry.session.elim_matches = (entry.session.elim_matches || 0) + 1;
+  }
+  if (addWin) entry.session.wins += 1;
   saveEntryToPlayer(targetPlayer);
   return { count: 1, mode: 'player', playerName: targetPlayer.name.string, entry: entry };
 }
@@ -572,7 +610,7 @@ function getSortedEntries() {
   arr.sort(function(a, b) {
     var scoreDiff = getCombinedAvgScore(b[1]) - getCombinedAvgScore(a[1]);
     if (scoreDiff !== 0) return scoreDiff;
-    var kdDiff = getKD(b[1]) - getKD(a[1]);
+    var kdDiff = getCombinedKD(b[1]) - getCombinedKD(a[1]);
     if (kdDiff !== 0) return kdDiff;
     return getAvgDamagePerLife(b[1]) - getAvgDamagePerLife(a[1]);
   });
@@ -603,16 +641,20 @@ function getSortedEntriesByTdmScore() {
   return arr;
 }
 
-// Session score helpers — same formulas as global
+// Session score helpers — use mode-specific kill/death/damage/match counts
 function _sessionElimScore(s) {
-  var m = s.matches || 0;
+  var m = (s.elim_matches > 0 ? s.elim_matches : s.matches) || 0;
   if (m === 0) return 0;
-  return ((0.5 * (s.damage || 0)) + (100 * (s.kills || 0)) + (50 * (s.assists || 0)) + (300 * (s.mvps || 0))) / m;
+  // Use mode-specific damage if available, fall back to total only for legacy sessions
+  var dmg = (s.elim_damage > 0 || s.tdm_damage > 0) ? (s.elim_damage || 0) : (s.damage || 0);
+  return ((0.5 * dmg) + (100 * (s.elim_kills || 0)) + (50 * (s.assists || 0)) + (300 * (s.mvps || 0))) / m;
 }
 function _sessionTdmScore(s) {
-  var m = s.matches || 0;
+  var m = (s.tdm_matches > 0 ? s.tdm_matches : s.matches) || 0;
   if (m === 0) return 0;
-  return ((0.25 * (s.damage || 0)) + (100 * (s.kills || 0)) + (50 * (s.assists || 0)) - (100 * (s.deaths || 0)) + (500 * (s.mvps || 0))) / m;
+  // Use mode-specific damage if available, fall back to total only for legacy sessions
+  var dmg = (s.elim_damage > 0 || s.tdm_damage > 0) ? (s.tdm_damage || 0) : (s.damage || 0);
+  return ((0.25 * dmg) + (100 * (s.tdm_kills || 0)) + (50 * (s.assists || 0)) - (100 * (s.tdm_deaths || 0)) + (500 * (s.mvps || 0))) / m;
 }
 function _sessionCombinedScore(s) {
   return (_sessionElimScore(s) + _sessionTdmScore(s)) / 2;
@@ -630,12 +672,24 @@ function _getSessionEntriesToday() {
 }
 
 function getSortedEntriesBySessionElimScore() {
-  var arr = _getSessionEntriesToday();
+  var today = getTodayDateString();
+  var keys = Object.keys(stats);
+  var arr  = [];
+  for (var i = 0; i < keys.length; i++) {
+    var s = stats[keys[i]].session;
+    if (s && s.date === today && (s.elim_matches > 0 || s.elim_kills > 0)) arr.push([keys[i], s]);
+  }
   arr.sort(function(a, b) { return _sessionElimScore(b[1]) - _sessionElimScore(a[1]); });
   return arr;
 }
 function getSortedEntriesBySessionTdmScore() {
-  var arr = _getSessionEntriesToday();
+  var today = getTodayDateString();
+  var keys = Object.keys(stats);
+  var arr  = [];
+  for (var i = 0; i < keys.length; i++) {
+    var s = stats[keys[i]].session;
+    if (s && s.date === today && (s.tdm_matches > 0 || s.tdm_kills > 0)) arr.push([keys[i], s]);
+  }
   arr.sort(function(a, b) { return _sessionTdmScore(b[1]) - _sessionTdmScore(a[1]); });
   return arr;
 }
@@ -792,9 +846,11 @@ function broadcastPostGameScoreboard(server) {
       if (_isTdmSession) {
         _entry.session.tdm_kills  = (_entry.session.tdm_kills  || 0) + (_pe.kills  || 0);
         _entry.session.tdm_deaths = (_entry.session.tdm_deaths || 0) + (_pe.deaths || 0);
+        _entry.session.tdm_damage = (_entry.session.tdm_damage || 0) + (_pe.damage || 0);
       } else {
         _entry.session.elim_kills  = (_entry.session.elim_kills  || 0) + (_pe.kills  || 0);
         _entry.session.elim_deaths = (_entry.session.elim_deaths || 0) + (_pe.deaths || 0);
+        _entry.session.elim_damage = (_entry.session.elim_damage || 0) + (_pe.damage || 0);
       }
       pushMatchHistory(_pname, _histMapName, _histModeName, _pe, _won);
       saveEntryToPlayer(_pp);

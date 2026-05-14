@@ -18,8 +18,8 @@ execute unless score #mode mode_respawns matches 1 run execute store result boss
 execute unless score #mode mode_respawns matches 1 run bossbar set gun:elim_blue players @a
 execute unless score #mode mode_respawns matches 1 run bossbar set gun:elim_blue visible true
 execute unless score #mode mode_respawns matches 1 run scoreboard objectives modify pleft_sidebar displayname ["◄ ",{"text":"Elimination","color":"gold","bold":true}," ►"]
-execute unless score #mode mode_respawns matches 1 run scoreboard players operation Red pleft_sidebar = #Red rcount
-execute unless score #mode mode_respawns matches 1 run scoreboard players operation Blue pleft_sidebar = #Blue bcount
+execute unless score #mode mode_respawns matches 1 run scoreboard players operation §cRed pleft_sidebar = #Red rcount
+execute unless score #mode mode_respawns matches 1 run scoreboard players operation §bBlue pleft_sidebar = #Blue bcount
 execute if score #mode mode_respawns matches 1 run scoreboard objectives setdisplay sidebar tdm_kills
 execute unless score #mode mode_respawns matches 1 run scoreboard objectives setdisplay sidebar pleft_sidebar
 scoreboard players set #match_started pleft_ui_timer 1
